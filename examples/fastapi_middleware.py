@@ -50,9 +50,9 @@ async def chat_completions(request: dict):
     In production, this would call the OpenAI API or your LLM provider.
     Here we simulate it with a simple response.
     """
-    import time
+    import asyncio
 
-    time.sleep(0.3)  # Simulate API latency
+    await asyncio.sleep(0.3)  # Simulate API latency
 
     messages = request.get("messages", [])
     user_message = ""
@@ -98,7 +98,9 @@ if __name__ == "__main__":
     print("Starting LongCache + FastAPI demo server...")
     print("Try: curl -X POST http://localhost:8000/v1/chat/completions")
     print("       -H 'Content-Type: application/json'")
-    print('       -d \'{"messages": [{"role": "user", "content": "What is RAG?"}]}\'')
+    print(
+        '       -d \'{"model": "demo", "messages": [{"role": "user", "content": "What is RAG?"}]}\''
+    )
     print()
     print("View stats: curl http://localhost:8000/cache/stats")
     print("Clear cache: curl -X DELETE http://localhost:8000/cache/clear")

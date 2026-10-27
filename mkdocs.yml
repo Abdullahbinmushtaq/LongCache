@@ -1,5 +1,5 @@
 site_name: LongCache
-site_description: Semantic similarity cache for LLM and RAG pipelines — cut repeat query costs by 40%+
+site_description: Semantic similarity cache for LLM and RAG pipelines
 site_url: https://endevsols.github.io/LongCache
 repo_url: https://github.com/ENDEVSOLS/LongCache
 repo_name: ENDEVSOLS/LongCache

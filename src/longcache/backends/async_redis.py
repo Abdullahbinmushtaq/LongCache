@@ -1,8 +1,8 @@
 """
 Async Redis cache backend using redis.asyncio.
 
-Drop-in async replacement for RedisCacheBackend.
-Use this in async FastAPI/Starlette applications.
+Standalone async storage backend. It is not yet wired into LongCache's
+index and lifecycle operations.
 
     backend = AsyncRedisCacheBackend(redis_url="redis://localhost:6379/0")
     entry_id = await backend.store(entry)

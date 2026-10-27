@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
   pull_request:
     branches: [main]
 
@@ -15,8 +15,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff
-      - name: Check for real errors (E, F rules)
-        run: ruff check . --select E,F --ignore E501,F401,E402,F541
+      - name: Check lint and formatting
+        run: make lint
 
   test:
     runs-on: ubuntu-latest
@@ -24,30 +24,48 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      LONGCACHE_TEST_REDIS_URL: redis://localhost:16379/0
+      LONGCACHE_TEST_MODEL: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Cache pip
+      - name: Cache dependencies and model weights
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          path: |
+            ~/.cache/uv
+            ~/.cache/huggingface
+          key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
 
-      - name: Install PyTorch CPU index
+      - name: Install locked package and test dependencies
         run: |
-          pip install --upgrade pip
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install uv
+          uv sync --locked --python ${{ matrix.python-version }} --extra all --extra dev --extra docs
 
-      - name: Install package and test dependencies
-        run: |
-          pip install -e ".[all,dev]"
+      - name: Confirm Redis is reachable
+        run: uv run --no-sync python -c "import os, redis; redis.Redis.from_url(os.environ['LONGCACHE_TEST_REDIS_URL']).ping()"
 
       - name: Run test suite with coverage
         run: |
-          pytest tests/ -v --tb=short --cov=src/longcache --cov-report=term-missing
+          uv run --no-sync pytest tests/ -v --tb=short -rs --cov=src/longcache --cov-report=term-missing
+
+      - name: Validate documentation
+        if: matrix.python-version == '3.12'
+        run: uv run --no-sync mkdocs build --strict
 
   build:
     runs-on: ubuntu-latest

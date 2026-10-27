@@ -10,6 +10,7 @@ is skipped.
 
 import os
 import time
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -156,7 +157,8 @@ class TestRedisBackend:
         assert backend.retrieve(entry_id) is None
 
     def test_get_expired(self, backend):
-        _ = backend.store(make_entry(expires_at=time.time() - 1))
+        expired_id = backend.store(make_entry(expires_at=time.time() - 1))
+        assert backend.retrieve(expired_id) is None
         valid_id = backend.store(make_entry(expires_at=time.time() + 3600))
 
         expired = backend.get_expired("default")
@@ -183,6 +185,25 @@ class TestRedisBackend:
         result = other.retrieve(entry_id)
         assert result is not None
         assert result.namespace == "shared"
+
+    def test_longcache_restart_restores_every_namespace(self, backend):
+        from longcache import CacheConfig, LongCache
+
+        class Embedder:
+            def embed(self, query):
+                value = np.ones(384, dtype=np.float32)
+                return value / np.linalg.norm(value)
+
+        config = CacheConfig(backend="redis", redis_url=REDIS_URL, ttl_seconds=0)
+        with patch("longcache.core.cache.LocalEmbedder", return_value=Embedder()):
+            first = LongCache(config)
+            first.set("same", "A", namespace="A")
+            first.set("same", "B", namespace="B")
+            first.close()
+            restarted = LongCache(config)
+            assert restarted.get("same", namespace="A") == "A"
+            assert restarted.get("same", namespace="B") == "B"
+            restarted.close()
 
 
 # ---------- Async Redis Backend ----------

@@ -58,6 +58,16 @@ class SimilarityIndex:
             self._async_lock = asyncio.Lock()
         return self._async_lock
 
+    def _new_index(self, dimension: int):
+        """Create an empty index that honors the configured search mode."""
+        import faiss
+
+        if self._config.faiss_index_type == "hnsw":
+            index = faiss.IndexHNSWFlat(dimension, self._config.hnsw_m, faiss.METRIC_INNER_PRODUCT)
+            index.hnsw.efSearch = self._config.hnsw_ef_search
+            return index
+        return faiss.IndexFlatIP(dimension)
+
     def _ensure_index(self, dimension: int):
         """
         Lazily create the FAISS index with the given dimension.
@@ -71,19 +81,7 @@ class SimilarityIndex:
         if self._faiss_index is not None:
             return
 
-        import faiss
-
-        index_type = getattr(self._config, "faiss_index_type", "flat")
-        if index_type == "hnsw":
-            m = getattr(self._config, "hnsw_m", 32)
-            ef = getattr(self._config, "hnsw_ef_search", 64)
-            # HNSW with inner product metric (cosine for normalized vectors)
-            self._faiss_index = faiss.IndexHNSWFlat(dimension, m, faiss.METRIC_INNER_PRODUCT)
-            self._faiss_index.hnsw.efSearch = ef
-        else:
-            # Default: exact flat index
-            self._faiss_index = faiss.IndexFlatIP(dimension)
-
+        self._faiss_index = self._new_index(dimension)
         self._dimension = dimension
 
     def add(self, vector: np.ndarray, entry_id: int) -> None:
@@ -100,13 +98,14 @@ class SimilarityIndex:
         with self._lock:
             if self._faiss_index is None:
                 self._ensure_index(vector.shape[0])
+            elif vector.shape != (self._dimension,):
+                raise ValueError("Embedding dimension changed; clear the cache before reuse")
 
             # FAISS expects 2D arrays
             vector_2d = vector.reshape(1, -1).astype(np.float32)
             faiss_id = self._next_faiss_id
-            # Assign id_map BEFORE calling FAISS to keep mapping consistent
-            self._id_map[faiss_id] = entry_id
             self._faiss_index.add(vector_2d)
+            self._id_map[faiss_id] = entry_id
             self._next_faiss_id += 1
 
     async def async_add(self, vector: np.ndarray, entry_id: int) -> None:
@@ -119,6 +118,8 @@ class SimilarityIndex:
         vector: np.ndarray,
         threshold: float = 0.92,
         namespace: str = "default",
+        *,
+        record_hit: bool = True,
     ) -> Optional[CacheEntry]:
         """
         Find the most similar cached entry for the given query vector.
@@ -139,43 +140,31 @@ class SimilarityIndex:
         with self._lock:
             if self._faiss_index is None or self._faiss_index.ntotal == 0:
                 return None
+            if vector.shape != (self._dimension,):
+                raise ValueError("Embedding dimension changed; clear the cache before reuse")
 
-            # Search for top-k (k=1) nearest neighbors
             vector_2d = vector.reshape(1, -1).astype(np.float32)
-            similarities, indices = self._faiss_index.search(vector_2d, 1)
-
-            if len(indices) == 0 or indices[0][0] < 0:
-                return None
-
-            best_similarity = float(similarities[0][0])
-            best_faiss_id = int(indices[0][0])
-
-            if best_similarity < threshold:
-                return None
-
-            # Look up the entry ID from our mapping
-            entry_id = self._id_map.get(best_faiss_id)
-            if entry_id is None:
-                return None
-
-            # Retrieve the full entry from the backend
-            entry = self._backend.retrieve(entry_id)
-            if entry is None:
-                return None
-
-            # Verify namespace
-            if entry.namespace != namespace:
-                return None
-
-            # Verify not expired
-            if entry.is_expired():
-                return None
-
-            # Update hit count
-            entry.increment_hit()
-            self._backend.update_hit_count(entry_id)
-
-            return entry
+            total = self._faiss_index.ntotal
+            k = min(total, 8)
+            examined = 0
+            while True:
+                similarities, indices = self._faiss_index.search(vector_2d, k)
+                for similarity, faiss_id in zip(similarities[0][examined:], indices[0][examined:]):
+                    if faiss_id < 0 or similarity < threshold:
+                        return None
+                    entry_id = self._id_map.get(int(faiss_id))
+                    if entry_id is None:
+                        continue
+                    entry = self._backend.retrieve(entry_id)
+                    if entry is None or entry.namespace != namespace or entry.is_expired():
+                        continue
+                    if record_hit:
+                        self._backend.update_hit_count(entry_id)
+                    return entry
+                if k == total:
+                    return None
+                examined = k
+                k = min(total, k * 2)
 
     def remove(self, faiss_id: int) -> None:
         """
@@ -208,7 +197,7 @@ class SimilarityIndex:
                 self._orphan_count,
                 (self._orphan_count / total) * 100,
             )
-            entries = self._backend.list_entries(self._config.namespace)
+            entries = self._backend.list_all_entries()
             entries = [e for e in entries if e.id not in self._removed_entry_ids]
             self.rebuild(entries)
             self._orphan_count = 0
@@ -224,8 +213,6 @@ class SimilarityIndex:
             entries: List of CacheEntry objects with their vectors populated.
         """
         with self._lock:
-            import faiss
-
             valid_entries = [
                 e for e in (entries or []) if e.vector is not None and e.id is not None
             ]
@@ -236,26 +223,20 @@ class SimilarityIndex:
                 self._next_faiss_id = 0
                 self._orphan_count = 0
                 self._removed_entry_ids.clear()
+                self._dimension = None
                 return
 
             dimension = valid_entries[0].vector.shape[0]
-            self._ensure_index(dimension)
+            if any(entry.vector.shape != (dimension,) for entry in valid_entries):
+                raise ValueError("Persisted cache contains incompatible embedding dimensions")
 
-            # Reset index
-            self._faiss_index = faiss.IndexFlatIP(dimension)
-            self._id_map = {}
-            self._next_faiss_id = 0
-
-            # Add all valid entries
-            vectors = []
-            for entry in valid_entries:
-                vectors.append(entry.vector)
-                self._id_map[self._next_faiss_id] = entry.id
-                self._next_faiss_id += 1
-
-            if vectors:
-                vectors_array = np.stack(vectors).astype(np.float32)
-                self._faiss_index.add(vectors_array)
+            replacement = self._new_index(dimension)
+            vectors_array = np.stack([entry.vector for entry in valid_entries]).astype(np.float32)
+            replacement.add(vectors_array)
+            self._faiss_index = replacement
+            self._id_map = {i: entry.id for i, entry in enumerate(valid_entries)}
+            self._next_faiss_id = len(valid_entries)
+            self._dimension = dimension
 
             self._orphan_count = 0
             self._removed_entry_ids.clear()

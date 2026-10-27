@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/ENDEVSOLS/LongCache/main/assets/logo.png" alt="LongCache Logo" width="320"/>
 </p>
 
-<p align="center"><strong>Production-grade semantic similarity cache for LLM and RAG pipelines — cut repeat query costs by 40%+.</strong></p>
+<p align="center"><strong>Semantic similarity cache for LLM and RAG pipelines — v0.1.1 beta.</strong></p>
 
 <p align="center">
 <a href="https://pypi.org/project/longcache/"><img src="https://img.shields.io/pypi/v/longcache" alt="PyPI Version"></a>
@@ -21,10 +21,7 @@
 <a href="https://github.com/ENDEVSOLS/LongCache/blob/main/CHANGELOG.md"><strong>Changelog</strong></a>
 </p>
 
-> *"What is your refund policy?" costs $0.003 the first time.*
-> *It should cost $0.0000 every time after that.*
-
-**LongCache** is a production-grade semantic similarity cache for LLM and RAG pipelines. Unlike string-match caches, it understands that *"How do I return a product?"* and *"What's your return process?"* deserve the same cached answer — and serves it in milliseconds.
+**LongCache** reuses stored responses for semantically similar queries when their namespace and request context match. Python 3.10, 3.11, and 3.12 are tested. Measure response quality, latency, and savings on your own workload.
 
 ---
 
@@ -32,13 +29,13 @@
 
 | Problem | Solution |
 |---------|----------|
-| Duplicate queries burn 30–60% of your LLM budget | Semantic cache intercepts similar queries before they reach the model |
-| GPTCache is unmaintained with 50+ dependencies | LongCache has 4 core deps and is actively maintained |
+| Repeated queries consume LLM tokens | Semantic cache intercepts similar queries before they reach the model |
+| Repeated LLM requests waste time and money | LongCache can reuse a stored answer when the request and context qualify |
 | String-match caches miss paraphrased queries | FAISS + BGE-small understands semantic meaning, not just exact tokens |
 | Most caches are coupled to one LLM provider | Works with LangChain, LangGraph, LlamaIndex, OpenAI, or raw functions |
 | Cross-model cache poisoning is a silent bug | Composite key scoping isolates entries per model, prompt, and temperature |
 
-**Result: Cut repeat query costs by 40%+ in production RAG applications.**
+**Results depend on the workload, hit quality, embedding cost, and cache configuration; measure savings in your own application.**
 
 ---
 
@@ -53,7 +50,7 @@ uv pip install longcache
 # With LangChain + LangGraph integration
 uv pip install longcache[langchain]
 
-# With Redis backend for multi-instance production
+# With Redis response storage (FAISS index remains local to this process)
 uv pip install longcache[redis]
 
 # Everything
@@ -61,6 +58,8 @@ uv pip install longcache[all]
 ```
 
 > **Offline-friendly**: LongCache embeds queries locally. After the BGE-small model weights are downloaded on first run, no internet connection is required.
+
+If you change `embedder_model` for a persistent cache, clear its existing entries first. Vectors from different embedding models are not interchangeable, even when they have the same number of dimensions.
 
 ### 30-Second Example
 
@@ -73,13 +72,13 @@ cache = LongCache()
 def my_rag_chain(query: str) -> str:
     return expensive_llm_call(query)   # Your retrieval + LLM pipeline
 
-# First call: MISS → runs full pipeline (~2 000 ms)
+# First call: MISS → runs the full pipeline
 result1 = my_rag_chain("What is your refund policy?")
 
-# Second call — exact query: HIT → instant (~5 ms)
+# Second call — exact query: HIT → cached response
 result2 = my_rag_chain("What is your refund policy?")
 
-# Third call — paraphrase: HIT → instant
+# Third call — paraphrase: HIT if the similarity threshold is met
 result3 = my_rag_chain("How do I get a refund?")
 ```
 
@@ -104,7 +103,7 @@ async def my_async_chain(query: str) -> str:
 │       ▼                                                      │
 │  ┌───────────────────┐                                       │
 │  │   LocalEmbedder   │  BAAI/bge-small-en-v1.5 — no API     │
-│  │   (~5 ms, local)  │  call, runs fully offline            │
+│  │   (local model)   │  call, runs offline after download   │
 │  └────────┬──────────┘                                       │
 │           │ 384-dim vector                                   │
 │           ▼                                                  │
@@ -115,7 +114,7 @@ async def my_async_chain(query: str) -> str:
 │           │    MISS                                          │
 │           ▼                                                  │
 │  ┌───────────────────┐                                       │
-│  │  Full RAG Chain   │  Retrieval + LLM (~1–3 s)            │
+│  │  Full RAG Chain   │  Retrieval + LLM            │
 │  └────────┬──────────┘                                       │
 │           │                                                  │
 │           ▼                                                  │
@@ -127,9 +126,9 @@ async def my_async_chain(query: str) -> str:
 ```
 
 1. **Intercept** — queries are checked before they reach the LLM
-2. **Embed** — the query is embedded locally in ~5 ms (BGE-small, no API call)
+2. **Embed** — the query is embedded locally with BGE-small (no embedding API call)
 3. **Search** — FAISS searches for cosine similarity against cached vectors
-4. **HIT** (similarity ≥ threshold): return cached response instantly
+4. **HIT** (similarity ≥ threshold): return the cached response
 5. **MISS**: run the full pipeline, cache the result, and return it
 
 ---
@@ -149,7 +148,7 @@ config = CacheConfig(
     max_entries=10_000,                  # Max entries per namespace (LRU eviction)
     namespace="default",                 # Logical isolation group
     embedder_model="BAAI/bge-small-en-v1.5",  # Local embedding model
-    backend="sqlite",                    # "sqlite" | "redis" | "async_redis" | "memory"
+    backend="sqlite",                    # "sqlite" | "redis" | "memory"
     db_path=".longcache/cache.db",       # SQLite path (auto-creates parent dirs)
     redis_url="redis://localhost:6379/0",# Redis connection URL
     track_stats=True,                    # Track hits, misses, and cost savings
@@ -209,7 +208,7 @@ cache = LongCache(config)
 ### Core
 
 - ✅ **Semantic Similarity Cache:** Understands paraphrased queries — “How do I return a product?” hits the same cache entry as “What’s your return process?”
-- ✅ **Local Embedding:** BAAI/bge-small-en-v1.5 runs entirely on-device (~5 ms per query, no API call, fully offline after first download)
+- ✅ **Local Embedding:** BAAI/bge-small-en-v1.5 runs on-device after its first download; latency depends on hardware.
 - ✅ **`@cache.cached` Decorator:** One-line caching for any sync or async function — auto-detects coroutines
 - ✅ **`@cache.cached_stream` Decorator:** Caches streaming generator responses (sync and async); yields live on MISS, replays from cache on HIT
 - ✅ **Composite Cache Keys:** Scopes entries per `model`, `system_prompt`, and `temperature` via SHA-256 fingerprint — prevents cross-model cache poisoning
@@ -256,9 +255,9 @@ cache = LongCache(CacheConfig(
 |---|---|
 | **Pros** | Zero external deps, persistent, WAL-mode thread safety, stats survive restarts |
 | **Cons** | Single-machine only |
-| **Best for** | Development, single-server production, CLI tools |
+| **Best for** | Development, single-process applications, CLI tools |
 
-### Redis (Production Multi-Instance)
+### Redis (Shared Storage)
 
 ```bash
 uv pip install longcache[redis]
@@ -274,23 +273,13 @@ cache = LongCache(CacheConfig(
 
 | | |
 |---|---|
-| **Pros** | Shared across instances, atomic TTL via `EXPIRE`, highly scalable |
-| **Cons** | Requires Redis; blocking I/O (not suited for `async` event loops) |
-| **Best for** | Multi-instance Kubernetes deployments, microservices (sync) |
+| **Pros** | Shared response storage and Redis key expiry |
+| **Cons** | Requires Redis; each LongCache process keeps its own FAISS index, so cross-process writes are not synchronized |
+| **Best for** | A single cache process using Redis for durable response storage |
 
-### Async Redis (Production Async Apps)
+### Async Redis backend status
 
-```python
-cache = LongCache(CacheConfig(
-    backend="async_redis",
-    redis_url="redis://localhost:6379/0",
-))
-```
-
-| | |
-|---|---|
-| **Pros** | Non-blocking — safe inside `async` event loops (FastAPI, etc.) |
-| **Best for** | Fully async production deployments |
+`AsyncRedisCacheBackend` can be used and tested as a standalone storage backend. It is not supported through `LongCache` in v0.1.1; selecting `backend="async_redis"` fails immediately. End-to-end async Redis integration is planned for a later release.
 
 ### In-Memory (Testing & CI)
 
@@ -408,6 +397,8 @@ response = client.chat.completions.create(
 )
 ```
 
+In v0.1.1, the OpenAI wrapper and ASGI middleware cache only single-turn text requests with an explicit model and supported parameters. Multi-turn, tool, multimodal, and streaming requests bypass the cache. The middleware also bypasses requests with Authorization, Cookie, or X-API-Key headers. Use a separate `CachedOpenAI` namespace per tenant or user when responses may contain private data; automatic tenant scoping is planned for a later release.
+
 ---
 
 ## FastAPI Middleware
@@ -428,7 +419,7 @@ app.add_middleware(
     cached_routes={"/v1/chat/completions"},
 )
 
-# All POST requests to /v1/chat/completions are now semantically cached.
+# Supported single-turn text requests with an explicit model may be cached.
 # X-LongCache: HIT  →  cached response served
 # X-LongCache: (absent) →  fresh LLM response
 ```
@@ -484,7 +475,7 @@ longcache export --namespace faq -o faq_cache.json
 
 ### `LongCache(config=None)`
 
-Main facade class. Accepts an optional `CacheConfig`; uses production-safe defaults otherwise.
+Main facade class. Accepts an optional `CacheConfig`; uses development defaults otherwise.
 
 #### Core Methods
 
@@ -548,7 +539,7 @@ Statistics are protected by a reentrant threading lock and persisted to the SQLi
 | `max_entries` | `int` | `10_000` | Max entries per namespace (LRU eviction) |
 | `namespace` | `str` | `"default"` | Default namespace |
 | `embedder_model` | `str` | `"BAAI/bge-small-en-v1.5"` | Local sentence-transformers model |
-| `backend` | `str` | `"sqlite"` | `"sqlite"`, `"redis"`, `"async_redis"`, `"memory"` |
+| `backend` | `str` | `"sqlite"` | `"sqlite"`, `"redis"`, `"memory"` through `LongCache` |
 | `db_path` | `str` | `".longcache/cache.db"` | SQLite database path |
 | `redis_url` | `str` | `"redis://localhost:6379/0"` | Redis connection URL |
 | `track_stats` | `bool` | `True` | Track hit/miss stats (thread-safe, persisted in SQLite) |
@@ -704,7 +695,7 @@ src/longcache/
 LongCache uses **BAAI/bge-small-en-v1.5** by default:
 
 - **384-dimensional** vectors — compact and fast
-- **Sub-5ms** embedding on modern CPU hardware
+- Local embedding after the model is downloaded; measure latency on your hardware
 - **Fully offline** after initial weight download — no API calls ever
 - **L2-normalized** — inner product equals cosine similarity in FAISS
 - **Singleton pattern** — the model is loaded once and reused across all instances
@@ -716,7 +707,7 @@ LongCache uses **BAAI/bge-small-en-v1.5** by default:
 | `IndexFlatIP` | `"flat"` | Exact search, deterministic, best for ≤ 100K entries |
 | `IndexHNSWFlat` | `"hnsw"` | Approximate search, sub-ms at any scale, best for 100K+ entries |
 
-The FAISS index is **rebuild-safe**: after TTL sweeps, namespace invalidations, or evictions, the index is fully rebuilt from the backend rather than incrementally patched — preventing stale vector accumulation.
+After TTL sweeps, namespace invalidations, or evictions, the local FAISS index is rebuilt from live backend entries. Redis storage alone does not synchronize indexes between processes.
 
 ### Thread Safety
 
@@ -727,7 +718,7 @@ The FAISS index is **rebuild-safe**: after TTL sweeps, namespace invalidations, 
 
 ### Background TTL Sweeper
 
-A lightweight daemon thread runs every 5 minutes to delete expired entries and rebuild the FAISS index. Starts automatically when `ttl_seconds > 0`. Shuts down gracefully when the `LongCache` instance is garbage-collected.
+A daemon thread checks for expired entries every 5 minutes when `ttl_seconds > 0`. Call `cache.close()` or use `with LongCache(...) as cache:` to stop it and release backend connections.
 
 ### Persistent Statistics
 
@@ -737,22 +728,7 @@ Hit/miss statistics are persisted to the SQLite backend and survive process rest
 
 ## Performance
 
-### Expected Cache Hit Rates
-
-| Scenario | Hit Rate | Cost Savings |
-|----------|----------|--------------|
-| FAQ chatbot | 60–80% | 40–60% |
-| Customer support | 40–60% | 25–40% |
-| Internal knowledge base | 50–70% | 30–50% |
-| General RAG pipeline | 30–50% | 20–35% |
-
-### Latency Comparison
-
-| Operation | Typical Latency |
-|-----------|----------------|
-| Full RAG pipeline (retrieval + LLM) | 1,000–3,000 ms |
-| LongCache HIT (embed + FAISS search) | 5–15 ms |
-| LongCache MISS overhead | 5–10 ms |
+Cache hit rate and savings vary with traffic, threshold, embedding model, and safety rules. Benchmark your own workload. Record hit rate, incorrect-hit rate, bypass rate, p50/p95/p99 latency, and actual provider usage before claiming cost savings.
 
 ---
 
@@ -858,21 +834,13 @@ uv run pytest tests/test_cache.py
 
 # Verbose output
 uv run pytest -v
+
+# Optional real-model tests (downloads model weights on first run)
+LONGCACHE_TEST_MODEL=1 uv run pytest tests/test_embedder.py -q
 ```
-
----
-
-## Contributing & Community
-
-We welcome contributions! Please see:
-- [CONTRIBUTING.md](CONTRIBUTING.md) — Setup, testing, and pull request guidelines.
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1 standards.
-- [SECURITY.md](SECURITY.md) — Vulnerability reporting and coordinated disclosure.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
-Copyright (c) 2026 ENDEVSOLS
+MIT

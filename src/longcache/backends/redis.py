@@ -1,9 +1,9 @@
 """
 Redis cache backend for LongCache.
 
-For production multi-instance deployments where multiple processes
-or servers need to share the same cache. Uses Redis hashes for
-namespace-scoped storage with TTL support via Redis key expiry.
+Uses Redis hashes for namespace-scoped storage and key expiry.
+LongCache's FAISS index is local to one process and is not synchronized
+across instances by this backend.
 """
 
 from __future__ import annotations
@@ -72,6 +72,10 @@ class RedisCacheBackend(AbstractCacheBackend):
     def _namespace_key(self, namespace: str) -> str:
         """Get the Redis key for a namespace's entry set."""
         return f"longcache:ns:{namespace}"
+
+    def close(self) -> None:
+        """Release Redis connections owned by this backend."""
+        self._client.close()
 
     def _vector_to_str(self, vector: np.ndarray) -> str:
         """Encode a numpy vector as base64 string for Redis storage."""
@@ -322,6 +326,13 @@ class RedisCacheBackend(AbstractCacheBackend):
             if entry is not None and not entry.is_expired():
                 entries.append(entry)
 
+        return entries
+
+    def list_all_entries(self) -> list[CacheEntry]:
+        """List live entries across every namespace for index reconstruction."""
+        entries = []
+        for namespace in self._client.smembers(self.NAMESPACE_SET):
+            entries.extend(self.list_entries(namespace))
         return entries
 
     def update_hit_count(self, entry_id: int) -> None:

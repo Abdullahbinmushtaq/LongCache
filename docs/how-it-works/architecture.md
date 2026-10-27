@@ -1,6 +1,6 @@
 # Architecture & Internals
 
-LongCache is designed for sub-millisecond query interception and deterministic memory safety.
+LongCache combines local embedding, a process-local FAISS index, and a response storage backend.
 
 ```
                      ┌─────────────────────────────┐
@@ -41,7 +41,7 @@ LongCache includes a singleton embedding manager `LocalEmbedder` using `sentence
 
 - **Vector Dimension**: 384 dimensions.
 - **L2 Normalization**: Vectors are unit-normalized upon generation so that inner product equals cosine similarity ($A \cdot B = \cos(\theta)$).
-- **Zero API Call**: All vector computations happen locally in-process with minimal CPU overhead (~3–5ms on standard hardware).
+- **Zero API Call**: Vector computations happen locally after model weights have been downloaded. Measure embedding latency on your hardware.
 
 ## 2. FAISS Similarity Index
 
@@ -62,5 +62,9 @@ Entries are strictly isolated within their corresponding scope.
 
 ## 4. Eviction & TTL Management
 
-1. **TTL (Time to Live)**: Each cache entry has an explicit timestamp. If a query hits a vector whose entry timestamp exceeds `ttl_seconds`, the entry is automatically marked stale, evicted, and treated as a MISS.
+1. **TTL (Time to Live)**: Each cache entry has an explicit timestamp. Expired entries are skipped during lookup. Search continues to another eligible candidate, and background maintenance removes expired storage entries.
 2. **LRU / Size Eviction**: When a namespace reaches `max_entries`, oldest accessed entries are purged.
+
+## Index maintenance in v0.1.1
+
+Lookup skips candidates outside the requested namespace, expired entries, and missing backend entries. Rebuilds load all live namespaces and preserve the configured flat or HNSW index. HNSW is approximate and can miss eligible neighbors; measure recall for your workload. Redis persistence does not synchronize FAISS indexes between processes.

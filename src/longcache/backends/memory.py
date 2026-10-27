@@ -182,6 +182,11 @@ class InMemoryCacheBackend(AbstractCacheBackend):
                 and (entry.expires_at is None or entry.expires_at > now)
             ]
 
+    def list_all_entries(self) -> list[CacheEntry]:
+        """List live entries across every namespace for index reconstruction."""
+        with self._lock:
+            return [entry for entry in self._entries.values() if not entry.is_expired()]
+
     def update_hit_count(self, entry_id: int) -> None:
         """
         Increment the hit count for a cache entry.

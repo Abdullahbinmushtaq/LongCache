@@ -1,5 +1,6 @@
 """Tests for the LongCache main class."""
 
+import concurrent.futures
 import time
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +9,6 @@ import pytest
 
 from longcache.config import CacheConfig
 from longcache.core.cache import LongCache
-from longcache.core.entry import CacheEntry
 
 
 def _make_mock_embedder():
@@ -37,7 +37,7 @@ class TestLongCacheGetSet:
     """Tests for get() and set() operations."""
 
     @patch("longcache.core.cache.LocalEmbedder")
-    def test_set_and_get_hit(self, MockEmbedder, temp_dir):
+    def test_set_and_get_hit(self, MockEmbedder):
         """Test that storing and retrieving a query results in a cache hit."""
         mock_embedder = _make_mock_embedder()
         MockEmbedder.return_value = mock_embedder
@@ -111,13 +111,14 @@ class TestLongCacheDecorator:
             return f"Result for: {query}"
 
         # First call — cache MISS
-        _ = expensive_func("What is RAG?")
+        result1 = expensive_func("What is RAG?")
         assert call_count == 1
 
         # Second call with same query — cache HIT
-        _ = expensive_func("What is RAG?")
+        result2 = expensive_func("What is RAG?")
         # Function should NOT be called again
         assert call_count == 1
+        assert result1 == result2
 
     @patch("longcache.core.cache.LocalEmbedder")
     def test_cached_decorator_with_namespace(self, MockEmbedder):
@@ -325,12 +326,6 @@ class TestLongCacheEviction:
         # Cache should have been evicted down to max_entries
         stats = cache.stats()
         assert stats["total_entries"] <= 3
-
-
-# Import for temp_dir fixture
-import os
-import tempfile
-import concurrent.futures
 
 
 class TestThreadSafetyAndIndexLeak:

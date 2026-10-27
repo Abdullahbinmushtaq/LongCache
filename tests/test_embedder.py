@@ -1,20 +1,20 @@
 """Tests for the LocalEmbedder component."""
 
+import os
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch
+from importlib.util import find_spec
+from unittest.mock import patch
 
 from longcache.core.embedder import LocalEmbedder
 
 
 def _model_available():
-    """Check if sentence-transformers is available and model can be loaded."""
-    try:
-        from sentence_transformers import SentenceTransformer
-
-        return True
-    except ImportError:
-        return False
+    """Run real-model tests only when explicitly enabled."""
+    return (
+        os.environ.get("LONGCACHE_TEST_MODEL") == "1"
+        and find_spec("sentence_transformers") is not None
+    )
 
 
 class TestLocalEmbedderUnit:
@@ -82,7 +82,7 @@ class TestLocalEmbedderIntegration:
         LocalEmbedder._instances = original
 
     @pytest.mark.skipif(
-        not _model_available(), reason="sentence-transformers not available or model not downloaded"
+        not _model_available(), reason="Set LONGCACHE_TEST_MODEL=1 to run model download tests"
     )
     def test_embed_returns_correct_shape(self):
         """Test that embed() returns a vector of the expected dimension."""
@@ -93,7 +93,7 @@ class TestLocalEmbedderIntegration:
         assert vector.shape == (384,)
 
     @pytest.mark.skipif(
-        not _model_available(), reason="sentence-transformers not available or model not downloaded"
+        not _model_available(), reason="Set LONGCACHE_TEST_MODEL=1 to run model download tests"
     )
     def test_embed_is_normalized(self):
         """Test that the embedding vector is L2-normalized."""
@@ -103,7 +103,7 @@ class TestLocalEmbedderIntegration:
         assert abs(norm - 1.0) < 1e-5
 
     @pytest.mark.skipif(
-        not _model_available(), reason="sentence-transformers not available or model not downloaded"
+        not _model_available(), reason="Set LONGCACHE_TEST_MODEL=1 to run model download tests"
     )
     def test_similar_queries_have_high_similarity(self):
         """Test that semantically similar queries produce similar vectors."""
@@ -114,7 +114,7 @@ class TestLocalEmbedderIntegration:
         assert similarity > 0.7, f"Similar queries should have high similarity, got {similarity}"
 
     @pytest.mark.skipif(
-        not _model_available(), reason="sentence-transformers not available or model not downloaded"
+        not _model_available(), reason="Set LONGCACHE_TEST_MODEL=1 to run model download tests"
     )
     def test_dissimilar_queries_have_low_similarity(self):
         """Test that semantically different queries produce dissimilar vectors."""

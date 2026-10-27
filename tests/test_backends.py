@@ -2,7 +2,6 @@
 
 import os
 import time
-import tempfile
 
 import numpy as np
 import pytest
@@ -309,8 +308,9 @@ class TestSQLiteBackend:
         db_path = os.path.join(temp_dir, "new_cache.db")
         assert not os.path.exists(db_path)
 
-        _ = SQLiteCacheBackend(db_path=db_path)
+        backend = SQLiteCacheBackend(db_path=db_path)
         assert os.path.exists(db_path)
+        assert backend.count("default") == 0
 
     def test_directory_auto_created(self, temp_dir):
         """Test that parent directories are created automatically."""

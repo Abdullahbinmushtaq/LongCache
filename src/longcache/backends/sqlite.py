@@ -125,6 +125,13 @@ class SQLiteCacheBackend(AbstractCacheBackend):
             self._local.connection = conn
         return self._local.connection
 
+    def close(self) -> None:
+        """Close the connection owned by the calling thread."""
+        connection = getattr(self._local, "connection", None)
+        if connection is not None:
+            connection.close()
+            self._local.connection = None
+
     def _entry_to_row(self, entry: CacheEntry) -> dict:
         """Convert a CacheEntry to a row dict for database insertion."""
         vector_bytes = entry.vector.tobytes() if entry.vector is not None else b""
@@ -385,6 +392,19 @@ class SQLiteCacheBackend(AbstractCacheBackend):
                 """,
                 (namespace, now),
             ).fetchall()
+            return [self._row_to_entry(row) for row in rows]
+
+    def list_all_entries(self) -> list[CacheEntry]:
+        """List live entries across every namespace for index reconstruction."""
+        with self._lock:
+            rows = (
+                self._get_connection()
+                .execute(
+                    "SELECT * FROM cache_entries WHERE expires_at IS NULL OR expires_at > ?",
+                    (time.time(),),
+                )
+                .fetchall()
+            )
             return [self._row_to_entry(row) for row in rows]
 
     def update_hit_count(self, entry_id: int) -> None:

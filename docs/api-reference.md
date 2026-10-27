@@ -109,7 +109,7 @@ config = CacheConfig(
 | `max_entries` | `int` | `10000` | Maximum entries stored per namespace before eviction |
 | `namespace` | `str` | `"default"` | Logical partition namespace |
 | `embedder_model` | `str` | `"BAAI/bge-small-en-v1.5"` | HuggingFace sentence-transformers model name |
-| `backend` | `str` | `"sqlite"` | Storage backend: `"sqlite"`, `"redis"`, `"async_redis"`, or `"memory"` |
+| `backend` | `str` | `"sqlite"` | Supported storage backend: `"sqlite"`, `"redis"`, or `"memory"`; `"async_redis"` fails fast in v0.1.1 |
 | `db_path` | `str` | `".longcache/cache.db"` | Path to SQLite database file |
 | `redis_url` | `str` | `"redis://localhost:6379/0"` | Redis connection URL |
 | `track_stats` | `bool` | `True` | Track hits, misses, and cost statistics |
@@ -138,7 +138,7 @@ vector = embedder.embed("What is LongCache?")  # Returns np.ndarray shape (384,)
 ### `LongCacheMiddleware`
 ```python
 from longcache.middleware import LongCacheMiddleware
-app.add_middleware(LongCacheMiddleware, cache=cache, routes={"/v1/chat/completions"})
+app.add_middleware(LongCacheMiddleware, cache=cache, cached_routes={"/v1/chat/completions"})
 ```
 
 ### `CachedLLM` & `CachedChain`

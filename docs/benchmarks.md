@@ -1,46 +1,20 @@
-# Performance & Cost Benchmarks
+# Performance and cost measurement
 
-Semantic caching transforms the economics and response latency of LLM pipelines.
+Latency and savings depend on the workload, embedding model, hardware, storage backend, threshold, and request shapes eligible for caching. The project does not promise a fixed response latency, hit rate, throughput, or percentage saving.
 
----
+## Reproduce the namespace lookup benchmark
 
-## 1. Latency Breakdown
+From the repository root:
 
-Benchmark executed on a modern 8-core Linux workstation with 10,000 cached customer support questions.
+```bash
+uv sync --locked --extra all --extra dev
+uv run --no-sync python tests/benchmarks/namespace_lookup.py
+```
 
-| Operation | Without LongCache | With LongCache (Hit) | Latency Delta |
-|---|---|---|---|
-| Query Embedding (`BAAI/bge-small-en-v1.5`) | — | 3.2 ms | — |
-| FAISS Index Search (`IndexFlatIP`, 10k vectors) | — | 0.4 ms | — |
-| SQLite Payload Read | — | 0.8 ms | — |
-| Upstream LLM Network & Generation | 1,850 ms | 0.0 ms | **-1,850 ms** |
-| **Total Response Latency** | **~1,850 ms** | **~4.4 ms** | **420x Faster** ⚡ |
+The benchmark uses 384-dimensional vectors and a single FAISS thread. It places the target entry behind 1,000 and 10,000 closer entries from other namespaces, runs each lookup 20 times, and asserts that the correct entry is returned. This exercises the progressive candidate search added in v0.1.1. It excludes embedding time, Redis/SQLite access, network calls, and concurrent traffic; its timings are a synthetic baseline.
 
----
+## Evaluate an application
 
-## 2. Real-World Cost Savings Projection
+Record the dataset, model, threshold, cache size, namespace distribution, backend, interpreter, package versions, thread count, and hardware. Measure cold and warm requests separately. Include p50/p95/p99 end-to-end latency, memory use, hit rate, bypass rate, and incorrect-hit rate on a held-out set.
 
-Assuming an enterprise RAG application handling **1,000,000 queries per month** with an average prompt length of 800 tokens and 250 completion tokens on GPT-4o:
-
-* Cost per un-cached query: ~$0.005
-* Monthly baseline cost without cache: **$5,000 USD / month**
-
-| Cache Hit Rate | Monthly API Cost With LongCache | Monthly Dollars Saved | Annual Dollars Saved |
-|---|---|---|---|
-| **20%** | $4,000 | **$1,000** | **$12,000** |
-| **40%** | $3,000 | **$2,000** | **$24,000** |
-| **55%** (Typical Customer Support / Docs) | $2,250 | **$2,750** | **$33,000** |
-| **70%** (High Repetition FAQ) | $1,500 | **$3,500** | **$42,000** |
-
----
-
-## 3. Comparison with Alternative Libraries
-
-| Capability | **LongCache** | GPTCache | LangChain Built-in Cache |
-|---|---|---|---|
-| **Dependencies** | **Minimal** (FAISS, NumPy, torch-cpu) | Heavy (50+ dependencies) | Lightweight |
-| **Semantic Matching** | ✅ Local SOTA embeddings | ✅ Complex setup | ❌ Exact string match only |
-| **Multi-Framework** | ✅ LangChain, LlamaIndex, OpenAI, FastAPI | ⚠️ Fragmented | ❌ LangChain only |
-| **Composite Anti-Poisoning** | ✅ Scoped by model, prompt, temp | ❌ None | ⚠️ Basic |
-| **Active Maintenance** | ✅ Actively maintained | ❌ Stale / unmaintained | ✅ Maintained |
-| **Ready for Async/FastAPI** | ✅ Native async middleware & Redis | ⚠️ Complex | ❌ Basic |
+Compare actual provider usage before and after caching, including embedding and storage costs. A cache hit avoids a provider call, but a high hit rate is useful only if cached answers remain correct for the request. Dollar projections must state their assumed traffic, token usage, provider prices, and hit rate; they are not observed savings.
