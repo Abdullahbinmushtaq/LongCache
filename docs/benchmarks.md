@@ -1,20 +1,21 @@
-# Performance and cost measurement
+# Evaluation and benchmarks
 
-Latency and savings depend on the workload, embedding model, hardware, storage backend, threshold, and request shapes eligible for caching. The project does not promise a fixed response latency, hit rate, throughput, or percentage saving.
-
-## Reproduce the namespace lookup benchmark
-
-From the repository root:
+## Synthetic quality protocol
 
 ```bash
-uv sync --locked --extra all --extra dev
-uv run --no-sync python tests/benchmarks/namespace_lookup.py
+uv run --no-sync python -m evaluation.run --config evaluation/configs/v0_2_release.json
 ```
 
-The benchmark uses 384-dimensional vectors and a single FAISS thread. It places the target entry behind 1,000 and 10,000 closer entries from other namespaces, runs each lookup 20 times, and asserts that the correct entry is returned. This exercises the progressive candidate search added in v0.1.1. It excludes embedding time, Redis/SQLite access, network calls, and concurrent traffic; its timings are a synthetic baseline.
+The pinned-model 4,800-case synthetic suite checks safe paraphrases, adversarial near misses, scope/context isolation, unsupported requests, and freshness. It reports accepted/incorrect hits, coverage, bypass reasons, confidence bounds, and scenario latency. The dataset and predeclared acceptance gates are versioned under `evaluation/`.
 
-## Evaluate an application
+The initial run accepted 2,000 safe hits with no incorrect hits or isolation errors and bypassed all declared unsupported cases. These are correlated template-expanded fixtures, not a representative production error estimate. The JSON report includes family counts, model/dependency versions, dataset/config/source hashes, and limitations. Scenario timing excludes model inference through precomputed real-model vectors.
 
-Record the dataset, model, threshold, cache size, namespace distribution, backend, interpreter, package versions, thread count, and hardware. Measure cold and warm requests separately. Include p50/p95/p99 end-to-end latency, memory use, hit rate, bypass rate, and incorrect-hit rate on a held-out set.
+## Warm-hit end-to-end comparison
 
-Compare actual provider usage before and after caching, including embedding and storage costs. A cache hit avoids a provider call, but a high hit rate is useful only if cached answers remain correct for the request. Dollar projections must state their assumed traffic, token usage, provider prices, and hit rate; they are not observed savings.
+```bash
+uv run --no-sync python -m evaluation.performance --baseline-root /path/to/v011/archive
+```
+
+The matched 1K/10K-entry flat/HNSW benchmark includes actual cached-model inference, uses one Torch/FAISS thread, and records 50 warm samples per scenario. The budget is `v0.2 p95 <= 1.2 × v0.1.1 p95 + 5 ms`. The initial local run passed all four comparisons, with v0.2 p95 approximately 28–34 ms. This is observed on the recorded hardware, not a general latency guarantee.
+
+Synthetic random distractors isolate index-size overhead. Miss latency, concurrent maintenance, distributed operation, and cost savings are not established by this benchmark. See the [execution record](plans/v0.2.0-execution.md) and repository `evaluation/reports/` for evidence and limits.
