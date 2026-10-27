@@ -16,6 +16,6 @@ The initial run accepted 2,000 safe hits with no incorrect hits or isolation err
 uv run --no-sync python -m evaluation.performance --baseline-root /path/to/v011/archive
 ```
 
-The matched 1K/10K-entry flat/HNSW benchmark includes actual cached-model inference, uses one Torch/FAISS thread, and records 50 warm samples per scenario. The budget is `v0.2 p95 <= 1.2 × v0.1.1 p95 + 5 ms`. The initial local run passed all four comparisons, with v0.2 p95 approximately 28–34 ms. This is observed on the recorded hardware, not a general latency guarantee.
+The matched 1K/10K-entry flat/HNSW benchmark includes actual cached-model inference, uses one Torch/FAISS thread per worker, and records 50 alternating paired samples per scenario. Separate old/new workers read the same immutable model snapshot; IPC time is excluded. The budget is `v0.2 p95 <= 1.2 × v0.1.1 p95 + 5 ms`. The initial local run passed all four comparisons, with v0.2 p95 approximately 30–44 ms. This is observed on the recorded hardware, not a general latency guarantee.
 
 Synthetic random distractors isolate index-size overhead. Miss latency, concurrent maintenance, distributed operation, and cost savings are not established by this benchmark. See the [execution record](plans/v0.2.0-execution.md) and repository `evaluation/reports/` for evidence and limits.
