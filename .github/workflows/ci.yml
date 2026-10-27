@@ -64,6 +64,10 @@ jobs:
         run: |
           uv run --no-sync pytest tests/ -v --tb=short -rs --cov=src/longcache --cov-report=term-missing
 
+      - name: Evaluate changing-document RAG workflow
+        if: matrix.python-version == '3.12'
+        run: uv run --no-sync python -m evaluation.rag
+
       - name: Run offline public-interface example
         run: uv run --no-sync python examples/safe_reuse.py
 

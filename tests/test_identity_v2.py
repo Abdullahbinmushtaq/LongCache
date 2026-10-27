@@ -63,3 +63,26 @@ def test_invalid_config_and_nonfinite_identity():
     with pytest.raises(ValueError):
         context(generation={"temperature": float("nan")})
     assert "alice" not in repr(context())
+
+
+@pytest.mark.parametrize(
+    "left,right",
+    [
+        ({}, {"temperature": None}),
+        ({"temperature": 0}, {"temperature": "0"}),
+        ({"temperature": False}, {"temperature": 0}),
+    ],
+)
+def test_canonical_identity_preserves_omission_null_and_scalar_types(left, right):
+    assert key(context(generation=left)) != key(context(generation=right))
+
+
+def test_instruction_order_is_response_affecting():
+    first = Instruction("system", "Use current policy")
+    second = Instruction("developer", "Only answer in English")
+    assert key(context(instructions=(first, second))) != key(context(instructions=(second, first)))
+
+
+def test_unregistered_custom_backend_is_explicitly_unsupported():
+    with pytest.raises(ValueError):
+        CacheConfig(backend="drops-metadata")

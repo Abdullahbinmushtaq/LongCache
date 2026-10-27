@@ -24,6 +24,12 @@ All notable changes are recorded here using [Keep a Changelog](https://keepachan
 - Query-only decorators bind a qualified function operation; additional arguments bypass. Unknown configuration keys raise.
 - Unmeasured cost fields remain zero; process counters reset on restart while entry hit counts persist. Manual hit/miss accounting methods were removed.
 
+### Fixed
+
+- Unsafe ASGI responses with repeated cache directives, non-JSON media types, or observed disconnects are never admitted.
+- Empty embedding batches enforce the same float32/contiguous contract as populated batches.
+- SQLite schema initialization is transactional, including process termination; incompatible partial schemas and missing manifests in populated SQLite/Redis stores fail closed.
+
 ### Validation
 
 - Full local Python 3.11/3.12 runs include real Redis and cached BGE weights. See `docs/plans/v0.2.0-execution.md` for exact evidence and remaining external release gates.

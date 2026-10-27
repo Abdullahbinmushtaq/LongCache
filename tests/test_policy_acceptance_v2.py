@@ -210,3 +210,24 @@ def test_default_decisions_and_logs_do_not_leak_payload_or_identity(caplog):
             "credential-private-marker",
         ):
             assert marker not in diagnostics
+
+
+def test_reopened_store_preserves_scopes_and_tag_boundaries(cache):
+    alice = context()
+    bob = context(scope=RequestScope("tenant", "bob"))
+    cache.set("policy", "alice", context=alice, tags=["source"])
+    cache.set("policy", "bob", context=bob, tags=["source"])
+    config = cache.config
+    cache.close()
+    with LongCache(config, embedder=TinyEmbedder()) as reopened:
+        try:
+            if config.backend == "memory":
+                assert reopened.get("policy", context=alice) is None
+                return
+            assert reopened.get("policy", context=alice) == "alice"
+            assert reopened.get("policy", context=bob) == "bob"
+            assert reopened.invalidate_by_tag("source", context=alice) == 1
+            assert reopened.get("policy", context=alice) is None
+            assert reopened.get("policy", context=bob) == "bob"
+        finally:
+            reopened.clear(operator=True)
