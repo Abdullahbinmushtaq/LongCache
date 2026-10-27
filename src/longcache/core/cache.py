@@ -61,8 +61,13 @@ class LongCache:
         self.backend = self._init_backend()
         self.index = SimilarityIndex(self.backend, self.config)
         # Metadata-only construction does not load/download model weights.
-        if self.backend.list_all_entries():
-            self._ensure_ready()
+        try:
+            if self.backend.list_all_entries():
+                self._ensure_ready()
+        except Exception:
+            if hasattr(self.backend, "close"):
+                self.backend.close()
+            raise
         self._sweep_thread = None
         if not metadata_only and self.config.ttl_seconds and hasattr(self.backend, "sweep_expired"):
             self._sweep_thread = threading.Thread(
@@ -91,6 +96,12 @@ class LongCache:
             self._ensure_open()
             if self._metadata_only:
                 manifest = self.backend.read_manifest()
+                if manifest and (
+                    manifest.get("format") != 2
+                    or manifest.get("cache_id") != self.config.cache_id
+                    or manifest.get("generation") != self.config.generation
+                ):
+                    raise ValueError("Incompatible storage generation")
                 self._fingerprint = digest(manifest["embedding"]) if manifest else "empty-store"
                 self._ready = True
                 return
@@ -204,6 +215,7 @@ class LongCache:
                 "format": 2,
                 "identity": identity,
                 "embedding": self._fingerprint,
+                "payload": digest(entry.response),
             }:
                 reason = "legacy_format"
                 continue
@@ -348,7 +360,12 @@ class LongCache:
             created_at=now,
             expires_at=now + effective_ttl if effective_ttl else None,
             tags=list(tags or []),
-            metadata={"format": 2, "identity": identity, "embedding": self._fingerprint},
+            metadata={
+                "format": 2,
+                "identity": identity,
+                "embedding": self._fingerprint,
+                "payload": digest(payload),
+            },
         )
         with self._mutation_lock:
             self._ensure_open()

@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import pytest
+from longcache.backends.memory import InMemoryCacheBackend
 from longcache import CacheConfig, LongCache, PolicyDecision, RequestScope
 from tests.test_identity_v2 import context
 from tests.test_embedding_contract_v2 import TinyEmbedder
@@ -163,3 +164,66 @@ def test_decorator_and_stream_passthrough(cache):
     assert list(stream("q")) == ["chunk"]
     assert list(stream("q")) == ["chunk"]
     assert len(calls) == 3
+
+
+def test_valid_json_payload_corruption_is_not_replayed(cache):
+    stored = cache.set("q", "approved", context=context())
+    if isinstance(cache.backend, InMemoryCacheBackend):
+        cache.backend.retrieve(stored.entry_id).response = "corrupted"
+    else:
+        cache.backend._get_connection().execute(
+            "UPDATE cache_entries SET response=? WHERE id=?", ('"corrupted"', stored.entry_id)
+        )
+        cache.backend._get_connection().commit()
+    assert cache.lookup("q", context=context()).outcome == "MISS"
+    assert cache.stats(context=context())["hits"] == 0
+
+
+def test_two_decorated_operations_cannot_share_an_answer(cache):
+    @cache.cached(context=context())
+    def first(query):
+        return "first"
+
+    @cache.cached(context=context())
+    def second(query):
+        return "second"
+
+    assert first("q") == "first"
+    assert second("q") == "second"
+    assert first("q") == "first"
+
+
+@pytest.mark.parametrize(
+    "policy,same", [("private", False), ("tenant_shared", True), ("public", True)]
+)
+def test_sharing_requires_explicit_policy(policy, same):
+    with LongCache(
+        CacheConfig(backend="memory", scope_policy=policy), embedder=TinyEmbedder()
+    ) as cache:
+        cache.set("q", "answer", context=context())
+        other = context(scope=RequestScope("tenant", "bob"))
+        assert (cache.lookup("q", context=other).outcome == "HIT") == same
+
+
+def test_hnsw_verification_budget_and_fallback():
+    with LongCache(
+        CacheConfig(backend="memory", faiss_index_type="hnsw", verification_budget=2),
+        embedder=TinyEmbedder(),
+    ) as cache:
+        cache.set("return in 30 days", "wrong", context=context())
+        cache.set("return in 40 days", "right", context=context())
+        assert cache.get("return in 40 days", context=context()) == "right"
+
+
+def test_application_verifier_failure_cannot_count_as_hit():
+    def verifier(*args):
+        raise RuntimeError("secret exception")
+
+    with LongCache(
+        CacheConfig(backend="memory"), embedder=TinyEmbedder(), verifier=verifier
+    ) as cache:
+        cache.set("q", "answer", context=context())
+        decision = cache.lookup("q", context=context())
+        assert decision.reason == "hook_failed"
+        assert "secret" not in repr(decision)
+        assert cache.stats(context=context())["hits"] == 0
