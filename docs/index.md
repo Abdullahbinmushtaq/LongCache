@@ -84,7 +84,7 @@ with LongCache(context=context) as cache:
     assert answer("return policy") == answer("return policy")
 ```
 
-A decorator adds the qualified function identity to the explicit operation. Extra function arguments bypass caching. Use an explicit per-call context resolver for a query-only function when trusted identity varies. Resolver failure bypasses caching.
+A decorator adds the qualified function identity to the explicit operation. For matching inspection or invalidation, use `derived = answer.cache_context_for(context)` and pass `derived` to the maintenance method. Extra function arguments bypass caching. Use an explicit per-call context resolver for a query-only function when trusted identity varies. Resolver failure bypasses caching.
 
 Async applications use `await cache.alookup(...)`, `await cache.aget(...)`, and `await cache.aset(...)`, or decorate an async query-only function. Sync and async calls follow the same policy. These methods do not make Redis index state consistent between processes.
 

@@ -56,3 +56,5 @@ Legacy model/prompt/temperature fields are insufficient to establish trusted req
 `BaseEmbedder` requires `dimension`, `embed(text)`, and a stable `EmbeddingDescriptor(model, revision, dimension, preprocessing, normalization)`. The default batch implementation supports empty batches. Calls are serialized per embedder; malformed or incompatible vectors are rejected.
 
 See [architecture](how-it-works/architecture.md), [migration](migration-v0.2.md), and the [support matrix](index.md#supported-integrations) for limits.
+
+For a decorated function, `answer.cache_context_for(base_context)` returns its immutable derived operation context. Use it for inspection, exports, or invalidation of that function's entries. Fixed contexts and per-call resolver contexts use the same derivation.

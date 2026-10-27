@@ -408,20 +408,28 @@ class LongCache:
         context_resolver=None,
         **legacy,
     ):
+        if context_resolver is not None and (
+            not callable(context_resolver)
+            or inspect.iscoroutinefunction(context_resolver)
+            or inspect.iscoroutinefunction(getattr(context_resolver, "__call__", None))
+        ):
+            raise ValueError("Context resolvers must be synchronous callables")
+
         def decorate(fn):
+            def context_for(base):
+                if not isinstance(base, RequestContext):
+                    if inspect.iscoroutine(base):
+                        base.close()
+                    return None
+                return replace(
+                    base, operation=base.operation + ":" + fn.__module__ + "." + fn.__qualname__
+                )
+
             def resolve(args, kwargs):
                 if context_resolver is None:
-                    base = context or self.context
-                    return (
-                        replace(
-                            base,
-                            operation=base.operation + ":" + fn.__module__ + "." + fn.__qualname__,
-                        )
-                        if base is not None
-                        else None
-                    )
+                    return context_for(context or self.context)
                 try:
-                    return context_resolver(*args, **kwargs)
+                    return context_for(context_resolver(*args, **kwargs))
                 except Exception:
                     return None
 
@@ -441,6 +449,7 @@ class LongCache:
                     await self.aset(query, result, namespace, context=ctx, ttl=ttl, tags=tags)
                     return result
 
+                async_wrapper.cache_context_for = context_for
                 return async_wrapper
 
             @wraps(fn)
@@ -457,6 +466,7 @@ class LongCache:
                 self.set(query, result, namespace, context=ctx, ttl=ttl, tags=tags)
                 return result
 
+            wrapper.cache_context_for = context_for
             return wrapper
 
         return decorate(func) if func is not None else decorate

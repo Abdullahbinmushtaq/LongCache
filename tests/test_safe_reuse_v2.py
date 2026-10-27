@@ -265,3 +265,36 @@ def test_admission_hook_failure_rejects_storage():
 def test_invalid_unicode_never_reaches_embedding_or_storage(cache):
     assert cache.lookup("bad\ud800", context=context()).outcome == "BYPASS"
     assert cache.set("q", "bad\ud800", context=context()).outcome == "REJECTED"
+
+
+def test_decorator_maintenance_uses_the_same_derived_context(cache):
+    calls = []
+
+    @cache.cached(context_resolver=lambda query: context(), tags=["source"])
+    def first(query):
+        calls.append(query)
+        return "first"
+
+    @cache.cached(context_resolver=lambda query: context())
+    def second(query):
+        return "second"
+
+    assert first("q") == "first"
+    assert second("q") == "second"
+    derived = first.cache_context_for(context())
+    assert cache.inspect("q", context=derived)["outcome"] == "HIT"
+    assert cache.invalidate_by_tag("source", context=derived) == 1
+    assert first("q") == "first"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_async_decorator_exposes_maintenance_context():
+    with LongCache(CacheConfig(backend="memory"), embedder=TinyEmbedder()) as cache:
+
+        @cache.cached(context=context())
+        async def answer(query):
+            return "answer"
+
+        assert await answer("q") == "answer"
+        assert cache.invalidate(context=answer.cache_context_for(context())) == 1
