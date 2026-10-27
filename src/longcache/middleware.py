@@ -61,10 +61,11 @@ class LongCacheMiddleware:
             if message["type"] == "http.disconnect":
                 await self.app(scope, self._replay(frames, receive), send)
                 return
-            body.extend(message.get("body", b""))
-            if len(body) > limit:
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > limit:
                 oversized = True
                 break
+            body.extend(chunk)
             if not message.get("more_body", False):
                 break
         replay = self._replay(frames, receive)

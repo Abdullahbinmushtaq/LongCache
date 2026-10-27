@@ -42,6 +42,11 @@ class InMemoryCacheBackend(AbstractCacheBackend):
         self._next_id = 1
         self._lock = threading.RLock()
 
+    def read_manifest(self):
+        import json
+
+        return json.loads(self._manifest) if hasattr(self, "_manifest") else None
+
     def ensure_manifest(self, manifest: dict) -> None:
         from longcache.core.identity import canonical
 

@@ -50,7 +50,7 @@ class CachedQueryEngine:
             namespace: Default namespace for cache entries.
         """
         self.query_engine = query_engine
-        self.cache = cache or LongCache(config or CacheConfig(namespace=namespace))
+        self.cache = cache
         self._namespace = namespace
 
     def query(self, query_str: str, **kwargs) -> Any:

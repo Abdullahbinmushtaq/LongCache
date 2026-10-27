@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from functools import wraps
 import inspect
 import threading
@@ -17,7 +17,7 @@ from .decision import LookupDecision, StoreDecision
 from .embedding_contract import EmbeddingGuard, validate_vector
 from .embedder import LocalEmbedder
 from .entry import CacheEntry
-from .identity import RequestContext, canonical, digest
+from .identity import Instruction, RequestContext, canonical, digest
 from .index import SimilarityIndex
 from .policy import admit, decode_response, verify
 
@@ -31,6 +31,7 @@ class LongCache:
         admit=None,
         verifier=None,
         context: RequestContext | None = None,
+        metadata_only: bool = False,
     ):
         self.config = config or CacheConfig()
         for hook in (admit, verifier):
@@ -42,6 +43,7 @@ class LongCache:
                 raise ValueError("Policy hooks must be synchronous callables")
         if context is not None and not isinstance(context, RequestContext):
             raise ValueError("context must be a RequestContext")
+        self._metadata_only = metadata_only
         self.context = context
         self._admit, self._verifier = admit, verifier
         self._mutation_lock = threading.RLock()
@@ -62,7 +64,7 @@ class LongCache:
         if self.backend.list_all_entries():
             self._ensure_ready()
         self._sweep_thread = None
-        if self.config.ttl_seconds and hasattr(self.backend, "sweep_expired"):
+        if not metadata_only and self.config.ttl_seconds and hasattr(self.backend, "sweep_expired"):
             self._sweep_thread = threading.Thread(
                 target=self._sweep, daemon=True, name="longcache-sweeper"
             )
@@ -87,6 +89,11 @@ class LongCache:
     def _ensure_ready(self):
         with self._mutation_lock:
             self._ensure_open()
+            if self._metadata_only:
+                manifest = self.backend.read_manifest()
+                self._fingerprint = digest(manifest["embedding"]) if manifest else "empty-store"
+                self._ready = True
+                return
             descriptor = self._embedding.descriptor
             self.backend.ensure_manifest(
                 {
@@ -102,6 +109,8 @@ class LongCache:
                 self._ready = True
 
     def _rebuild_index_from_backend(self):
+        if self._metadata_only:
+            return
         entries = []
         for entry in self.backend.list_all_entries():
             metadata = entry.metadata
@@ -122,7 +131,16 @@ class LongCache:
         if not isinstance(ctx, RequestContext):
             return None, "missing_identity"
         if any(value is not None for value in legacy.values()):
-            return None, "unsupported_parameter"
+            updates = {}
+            if legacy.get("model") is not None:
+                updates["model"] = legacy["model"]
+            if legacy.get("system_prompt") is not None:
+                updates["instructions"] = (Instruction("system", legacy["system_prompt"]),)
+            if legacy.get("temperature") is not None:
+                updates["generation"] = dict(ctx.generation) | {
+                    "temperature": legacy["temperature"]
+                }
+            ctx = replace(ctx, **updates)
         policy = self.config.scope_policy
         if policy != "public" and (
             ctx.scope is None or (policy == "private" and not ctx.scope.user_id)
@@ -163,6 +181,8 @@ class LongCache:
         _inspect=False,
         _cancel=None,
     ):
+        if self._metadata_only:
+            raise ValueError("Vector operations require a normal cache instance")
         prepared, reason = self._prepare(
             query,
             context,
@@ -297,6 +317,8 @@ class LongCache:
         context=None,
         _cancel=None,
     ):
+        if self._metadata_only:
+            raise ValueError("Vector operations require a normal cache instance")
         prepared, reason = self._prepare(
             query,
             context,
@@ -361,7 +383,15 @@ class LongCache:
         def decorate(fn):
             def resolve(args, kwargs):
                 if context_resolver is None:
-                    return context or self.context
+                    base = context or self.context
+                    return (
+                        replace(
+                            base,
+                            operation=base.operation + ":" + fn.__module__ + "." + fn.__qualname__,
+                        )
+                        if base is not None
+                        else None
+                    )
                 try:
                     return context_resolver(*args, **kwargs)
                 except Exception:

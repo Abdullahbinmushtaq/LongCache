@@ -118,6 +118,12 @@ class SQLiteCacheBackend(AbstractCacheBackend):
             conn.execute("PRAGMA temp_store=MEMORY")  # temp tables in RAM
             conn.execute("PRAGMA mmap_size=268435456")  # 256MB memory-mapped I/O
 
+    def read_manifest(self):
+        row = (
+            self._get_connection().execute("SELECT data FROM cache_manifest WHERE id=1").fetchone()
+        )
+        return json.loads(row[0]) if row else None
+
     def ensure_manifest(self, manifest: dict) -> None:
         from longcache.core.identity import canonical
 

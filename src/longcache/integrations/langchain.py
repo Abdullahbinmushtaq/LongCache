@@ -1,8 +1,8 @@
 """
 LangChain integration for LongCache.
 
-Provides CachedLLM and CachedChain wrappers that add semantic caching
-to any LangChain LLM or LCEL chain with zero code changes.
+Provides CachedLLM and CachedChain wrappers that add compatibility delegation for existing callers.
+Opaque framework execution bypasses caching in v0.2.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class CachedLLM:
             namespace: Default namespace for cache entries.
         """
         self.llm = llm
-        self.cache = cache or LongCache(config or CacheConfig(namespace=namespace))
+        self.cache = cache
         self._namespace = namespace
 
     def _extract_query(self, input: Any) -> str:
@@ -181,7 +181,7 @@ class CachedChain:
             namespace: Default namespace for cache entries.
         """
         self.chain = chain
-        self.cache = cache or LongCache(config or CacheConfig(namespace=namespace))
+        self.cache = cache
         self.query_key = query_key
         self._namespace = namespace
 

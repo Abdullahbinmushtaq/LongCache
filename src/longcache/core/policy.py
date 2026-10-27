@@ -134,6 +134,11 @@ def numbers(text):
         unit = (m[3] or m[1] or "").lower()
         unit = units.get(unit, unit.rstrip("s"))
         result.append((str(Decimal(m[2]).normalize()), unit))
+    result.extend(
+        (x.lower(), "identifier")
+        for x in re.findall(r"\b(?=\w*\d)(?=\w*[A-Za-z])[A-Za-z0-9_-]+\b", text)
+    )
+    result.extend((x, "date") for x in re.findall(r"\b\d{4}-\d{2}-\d{2}\b", text))
     return sorted(result)
 
 
@@ -141,7 +146,7 @@ def verify(query, candidate, response, similarity, context, hook=None):
     if context.language != "en" or not query.isascii() or not candidate.isascii():
         return PolicyDecision("abstain", "verification_abstained")
     a, b = query.replace("’", "'"), candidate.replace("’", "'")
-    if bool(_NEGATION.search(a)) != bool(_NEGATION.search(b)):
+    if len(_NEGATION.findall(a)) != len(_NEGATION.findall(b)):
         return PolicyDecision("reject", "negation_mismatch")
     if numbers(a) != numbers(b):
         return PolicyDecision("reject", "number_mismatch")

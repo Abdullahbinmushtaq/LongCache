@@ -115,7 +115,9 @@ class RequestContext:
             raise ValueError("corpus_version must be a nonempty string")
         if not all(type(v) is str and v for v in self.document_versions.values()):
             raise ValueError("Document versions must be nonempty strings")
-        if not all(type(x) is str and x for x in self.protected_entities):
+        if not isinstance(self.protected_entities, (tuple, list)) or not all(
+            type(x) is str and x for x in self.protected_entities
+        ):
             raise ValueError("Protected entities must be nonempty strings")
         object.__setattr__(self, "instructions", tuple(self.instructions))
         object.__setattr__(self, "generation", freeze(self.generation))

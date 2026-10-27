@@ -72,6 +72,10 @@ class RedisCacheBackend(AbstractCacheBackend):
         self._lock = threading.RLock()
         self._client = redis.Redis.from_url(redis_url, decode_responses=True)
 
+    def read_manifest(self):
+        data = self._client.get(self.ROOT + ":manifest")
+        return json.loads(data) if data else None
+
     def ensure_manifest(self, manifest: dict) -> None:
         from longcache.core.identity import canonical
 

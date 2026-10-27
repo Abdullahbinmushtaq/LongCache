@@ -79,6 +79,13 @@ class CachedOpenAI:
             raise ValueError("Unsupported OpenAI response codec")
         self.chat = _ChatProxy(self)
 
+    def _extract_query(self, messages):
+        """Legacy inspection helper; never used to decide cache eligibility."""
+        for message in reversed(messages):
+            if isinstance(message, dict) and message.get("role") == "user":
+                return message.get("content", "")
+        return str(messages)
+
     def __getattr__(self, name):
         return getattr(self._client, name)
 

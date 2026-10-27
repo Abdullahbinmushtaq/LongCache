@@ -10,7 +10,6 @@ is skipped.
 
 import os
 import time
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -189,21 +188,17 @@ class TestRedisBackend:
     def test_longcache_restart_restores_every_namespace(self, backend):
         from longcache import CacheConfig, LongCache
 
-        class Embedder:
-            def embed(self, query):
-                value = np.ones(384, dtype=np.float32)
-                return value / np.linalg.norm(value)
+        from tests.helpers import HashEmbedder, trusted_context
 
         config = CacheConfig(backend="redis", redis_url=REDIS_URL, ttl_seconds=0)
-        with patch("longcache.core.cache.LocalEmbedder", return_value=Embedder()):
-            first = LongCache(config)
-            first.set("same", "A", namespace="A")
-            first.set("same", "B", namespace="B")
-            first.close()
-            restarted = LongCache(config)
-            assert restarted.get("same", namespace="A") == "A"
-            assert restarted.get("same", namespace="B") == "B"
-            restarted.close()
+        first = LongCache(config, embedder=HashEmbedder(), context=trusted_context())
+        first.set("same", "A", namespace="A")
+        first.set("same", "B", namespace="B")
+        first.close()
+        restarted = LongCache(config, embedder=HashEmbedder(), context=trusted_context())
+        assert restarted.get("same", namespace="A") == "A"
+        assert restarted.get("same", namespace="B") == "B"
+        restarted.close()
 
 
 # ---------- Async Redis Backend ----------
