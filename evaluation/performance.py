@@ -106,6 +106,12 @@ def main():
             "faiss_threads": 1,
         },
         "model_revision": REVISION,
+        "source_tree_sha256": sha256(
+            b"".join(
+                str(p).encode() + p.read_bytes()
+                for p in sorted(Path("src/longcache").rglob("*.py"))
+            )
+        ).hexdigest(),
         "v02": result,
         "limits": "Synthetic random distractor vectors measure index size overhead; warm queries include real pinned BGE inference. No miss/concurrent-maintenance throughput claim.",
         "comparison_passed": None,
