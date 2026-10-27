@@ -84,6 +84,7 @@ nav:
   - Migration to v0.2: migration-v0.2.md
   - v0.2 Implementation Plan: plans/v0.2.0.md
   - v0.2 Execution Record: plans/v0.2.0-execution.md
+  - v0.2 Acceptance Evidence: plans/v0.2.0-acceptance.md
   - Benchmarks: benchmarks.md
   - Changelog: changelog.md
 
