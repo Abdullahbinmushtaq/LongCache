@@ -868,7 +868,6 @@ We welcome contributions! Please see:
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Setup, testing, and pull request guidelines.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1 standards.
 - [SECURITY.md](SECURITY.md) — Vulnerability reporting and coordinated disclosure.
-- [ROADMAP.md](ROADMAP.md) — Upcoming features, vision, and release plans.
 
 ---
 
