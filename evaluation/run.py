@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import asdict, replace
 from hashlib import sha256
 import json
+from importlib.metadata import version
 import os
 from pathlib import Path
 import platform
@@ -189,6 +190,16 @@ def main():
     failures = check_gates(summary, config["gates"])
     report = {
         "protocol": config["protocol"],
+        "source_tree_sha256": sha256(
+            b"".join(
+                str(p).encode() + p.read_bytes()
+                for p in sorted(Path("src/longcache").rglob("*.py"))
+            )
+        ).hexdigest(),
+        "dependencies": {
+            name: version(name)
+            for name in ("numpy", "faiss-cpu", "sentence-transformers", "torch", "scipy")
+        },
         "dataset_version": source["version"],
         "dataset_sha256": dataset_hash,
         "config_sha256": sha256(args.config.read_bytes()).hexdigest(),
