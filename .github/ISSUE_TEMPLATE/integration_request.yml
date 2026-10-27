@@ -1,0 +1,36 @@
+name: Integration Request
+description: Request support for a new framework or vector store
+labels: ["enhancement", "integration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Request a new framework integration (e.g. Semantic Kernel, DSPy, CrewAI, AutoGen) or cache backend (e.g. Qdrant, Milvus, Postgres/pgvector).
+
+  - type: input
+    id: framework
+    attributes:
+      label: Framework / Library Name
+      placeholder: "e.g. DSPy, Semantic Kernel, PgVector"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Framework Version
+      placeholder: "e.g. 2.0+"
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use Case
+      description: How would you use LongCache with this framework?
+    validations:
+      required: true
+
+  - type: textarea
+    id: docs
+    attributes:
+      label: Relevant Documentation
+      description: Links to the framework's middleware, interceptor, or memory system docs.
