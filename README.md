@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/ENDEVSOLS/LongCache/main/assets/logo.png" alt="LongCache Logo" width="320"/>
 </p>
 
-<p align="center"><strong>Semantic similarity cache for LLM and RAG pipelines — v0.2.0 (unreleased).</strong></p>
+<p align="center"><strong>Semantic similarity cache for LLM and RAG pipelines .</strong></p>
 
 <p align="center">
 <a href="https://pypi.org/project/longcache/"><img src="https://img.shields.io/pypi/v/longcache" alt="PyPI Version"></a>
@@ -15,25 +15,25 @@
 </p>
 
 <p align="center">
-<a href="https://endevsols.github.io/LongCache/"><strong>📖 Documentation</strong></a> &nbsp;·&nbsp;
-<a href="https://endevsols.github.io/LongCache/getting-started/quickstart/"><strong>Quick Start</strong></a> &nbsp;·&nbsp;
-<a href="https://endevsols.github.io/LongCache/api-reference/"><strong>API Reference</strong></a> &nbsp;·&nbsp;
+<a href="https://endevsols.github.io/LongCache/"><strong>📖 Documentation</strong></a>  · 
+<a href="https://endevsols.github.io/LongCache/getting-started/quickstart/"><strong>Quick Start</strong></a>  · 
+<a href="https://endevsols.github.io/LongCache/api-reference/"><strong>API Reference</strong></a>  · 
 <a href="https://github.com/ENDEVSOLS/LongCache/blob/main/CHANGELOG.md"><strong>Changelog</strong></a>
 </p>
 
-**LongCache** reuses stored responses when trusted scope, execution context, response admission, and verification permit reuse. Python 3.11 and 3.12 are tested; v0.1.1 remains the Python 3.10-compatible line. Measure response quality, latency, and savings on your own workload.
+**LongCache** reuses stored responses when trusted scope, execution context, response admission, and verification permit reuse. Python 3.11 and 3.12 are tested and  remains the Python 3.10-compatible line. Measure response quality, latency, and savings on your own workload.
 
 ---
 
 ## Why LongCache?
 
-| Problem | Solution |
-|---------|----------|
-| Repeated queries consume LLM tokens | Semantic cache intercepts similar queries before they reach the model |
-| Repeated LLM requests waste time and money | LongCache can reuse a stored answer when the request and context qualify |
-| String-match caches miss paraphrased queries | FAISS + BGE-small understands semantic meaning, not just exact tokens |
-| Most caches are coupled to one LLM provider | Scoped caching for supported OpenAI requests and raw functions; generic framework adapters pass through |
-| Cross-model cache poisoning is a silent bug | Immutable request identity isolates tenant/user, provider/model, instructions, settings, and source versions |
+| Problem                                      | Solution                                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Repeated queries consume LLM tokens          | Semantic cache intercepts similar queries before they reach the model                                        |
+| Repeated LLM requests waste time and money   | LongCache can reuse a stored answer when the request and context qualify                                     |
+| String-match caches miss paraphrased queries | FAISS + BGE-small understands semantic meaning, not just exact tokens                                        |
+| Most caches are coupled to one LLM provider  | Scoped caching for supported OpenAI requests and raw functions; generic framework adapters pass through      |
+| Cross-model cache poisoning is a silent bug  | Immutable request identity isolates tenant/user, provider/model, instructions, settings, and source versions |
 
 **Results depend on the workload, hit quality, embedding cost, and cache configuration; measure savings in your own application.**
 
@@ -42,8 +42,6 @@
 ## Quick Start
 
 ### Installation
-
-**v0.2.0 is unreleased.** The commands below install the available published release. To use this development checkout, run `uv sync --locked --extra all --extra dev --extra docs` from the repository root.
 
 ```bash
 # Core — SQLite backend + FAISS + BGE-small (no external services needed)
@@ -60,8 +58,6 @@ uv pip install longcache[all]
 ```
 
 > **Offline-friendly**: LongCache embeds queries locally. After the BGE-small model weights are downloaded on first run, no internet connection is required.
-
-**Upgrade from v0.1.1:** preserve the old store and use a fresh SQLite path (default `.longcache/v2/cache.db`) or Redis generation. Legacy entries are not imported. Changing an embedding model or revision also requires a new store generation. See [migration and rollback](docs/migration-v0.2.md).
 
 ### 30-Second Example
 
@@ -209,13 +205,13 @@ cache = LongCache(config, context=context)
 
 ### Similarity Threshold Guide
 
-| Threshold | Behavior | Recommended Use Case |
-|-----------|----------|----------------------|
-| 0.99 | Near-exact match only | Precise FAQ lookup |
-| 0.95 | Very similar phrasing | Customer support |
+| Threshold      | Behavior                      | Recommended Use Case            |
+| -------------- | ----------------------------- | ------------------------------- |
+| 0.99           | Near-exact match only         | Precise FAQ lookup              |
+| 0.95           | Very similar phrasing         | Customer support                |
 | **0.92** | **Default — balanced** | **General RAG pipelines** |
-| 0.85 | Looser matching | Exploratory search |
-| 0.75 | Topic-level clustering | Broad domain matching |
+| 0.85           | Looser matching               | Exploratory search              |
+| 0.75           | Topic-level clustering        | Broad domain matching           |
 
 **Tip:** Start at 0.92 and adjust based on your observed hit rate vs. false-positive rate.
 
@@ -271,11 +267,11 @@ cache = LongCache(
 )
 ```
 
-| | |
-|---|---|
-| **Pros** | No external service, persistent entries/hit counts, WAL mode, compatible-generation validation |
-| **Cons** | Single-machine only |
-| **Best for** | Development, single-process applications, CLI tools |
+|                    |                                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| **Pros**     | No external service, persistent entries/hit counts, WAL mode, compatible-generation validation |
+| **Cons**     | Single-machine only                                                                            |
+| **Best for** | Development, single-process applications, CLI tools                                            |
 
 ### Redis (Shared Storage)
 
@@ -293,11 +289,11 @@ cache = LongCache(
 )
 ```
 
-| | |
-|---|---|
-| **Pros** | Shared response storage and Redis key expiry |
-| **Cons** | Requires Redis; each LongCache process keeps its own FAISS index, so cross-process writes are not synchronized |
-| **Best for** | A single cache process using Redis for durable response storage |
+|                    |                                                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| **Pros**     | Shared response storage and Redis key expiry                                                                   |
+| **Cons**     | Requires Redis; each LongCache process keeps its own FAISS index, so cross-process writes are not synchronized |
+| **Best for** | A single cache process using Redis for durable response storage                                                |
 
 ### Async Redis backend status
 
@@ -309,11 +305,11 @@ cache = LongCache(
 cache = LongCache(CacheConfig(backend="memory"))
 ```
 
-| | |
-|---|---|
-| **Pros** | Fastest possible, zero I/O, no files created |
-| **Cons** | Lost on process restart, single-process only |
-| **Best for** | Unit tests, CI/CD pipelines, benchmarks |
+|                    |                                              |
+| ------------------ | -------------------------------------------- |
+| **Pros**     | Fastest possible, zero I/O, no files created |
+| **Cons**     | Lost on process restart, single-process only |
+| **Best for** | Unit tests, CI/CD pipelines, benchmarks      |
 
 ---
 
@@ -512,18 +508,18 @@ Main facade class. Accepts an optional `CacheConfig` and explicit request contex
 
 #### Core Methods
 
-| Method | Description |
-|--------|-------------|
-| `lookup(query, ..., context=...)`, `alookup(...)` | Typed `HIT` / `MISS` / `BYPASS` decision with reason and decoded response. |
-| `get(query, ..., context=...)`, `aget(...)` | Decoded response or `None`; same lookup policy. |
-| `set(query, response, ..., context=...)`, `aset(...)` | `StoreDecision` with `STORED` / `REJECTED`; strict admission and serialization. |
-| `cached(..., context=..., context_resolver=...)` | Query-only sync/async decorator; extra arguments bypass. |
-| `cached_stream(...)` | Sync/async generator pass-through; no caching. |
-| `invalidate(..., context=...)`, `invalidate_by_tag(tag, ..., context=...)` | Delete only within the exact scoped execution context. |
-| `clear(operator=True)` | Explicit whole-store clearing. |
-| `stats(context=...)` | Scoped process counters and stored-entry count. |
-| `inspect(query, ..., context=...)` | Redacted decision/score dictionary without hit accounting. |
-| `close()` / context manager | Release owned background work and backend resources. |
+| Method                                                                         | Description                                                                           |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `lookup(query, ..., context=...)`, `alookup(...)`                          | Typed `HIT` / `MISS` / `BYPASS` decision with reason and decoded response.      |
+| `get(query, ..., context=...)`, `aget(...)`                                | Decoded response or `None`; same lookup policy.                                     |
+| `set(query, response, ..., context=...)`, `aset(...)`                      | `StoreDecision` with `STORED` / `REJECTED`; strict admission and serialization. |
+| `cached(..., context=..., context_resolver=...)`                             | Query-only sync/async decorator; extra arguments bypass.                              |
+| `cached_stream(...)`                                                         | Sync/async generator pass-through; no caching.                                        |
+| `invalidate(..., context=...)`, `invalidate_by_tag(tag, ..., context=...)` | Delete only within the exact scoped execution context.                                |
+| `clear(operator=True)`                                                       | Explicit whole-store clearing.                                                        |
+| `stats(context=...)`                                                         | Scoped process counters and stored-entry count.                                       |
+| `inspect(query, ..., context=...)`                                           | Redacted decision/score dictionary without hit accounting.                            |
+| `close()` / context manager                                                  | Release owned background work and backend resources.                                  |
 
 #### `@cache.cached` Decorator Options
 
@@ -559,26 +555,26 @@ Process hit/miss counters reset on restart; stored entry hit counts persist. Unm
 
 ### `CacheConfig` Field Reference
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `similarity_threshold` | `float` | `0.92` | Cosine similarity threshold for cache hits (0.0–1.0) |
-| `ttl_seconds` | `int` | `3600` | Entry lifetime in seconds. `0` = never expire |
-| `max_entries` | `int` | `10_000` | Max entries per semantic partition; oldest entries evicted first |
-| `namespace` | `str` | `"default"` | Default namespace |
-| `embedder_model` | `str` | `"BAAI/bge-small-en-v1.5"` | Local sentence-transformers model |
-| `backend` | `str` | `"sqlite"` | `"sqlite"`, `"redis"`, `"memory"` through `LongCache` |
-| `db_path` | `str` | `".longcache/v2/cache.db"` | SQLite database path |
-| `redis_url` | `str` | `"redis://localhost:6379/0"` | Redis connection URL |
-| `track_stats` | `bool` | `True` | Track process-local hit/miss counters |
-| `faiss_index_type` | `str` | `"flat"` | `"flat"` (exact) or `"hnsw"` (approximate) |
-| `hnsw_m` | `int` | `32` | HNSW connections per node (higher = more accurate, more memory) |
-| `hnsw_ef_search` | `int` | `64` | HNSW search depth (higher = more accurate, slower) |
-| `scope_policy` | `str` | `"private"` | Trusted tenant/user scope; `tenant_shared` and `public` require explicit opt-in |
-| `cache_id`, `generation` | `str` | `"default"` | Owned Redis keyspace and storage generation |
-| `verification_budget` | `int` | `8` | Maximum candidates checked per lookup |
-| `model` | `str` | `""` | Legacy execution field; does not replace trusted context |
-| `system_prompt` | `str` | `""` | Global system prompt for composite key scoping |
-| `temperature` | `float` | `-1.0` | Global temperature for composite key scoping (`-1.0` = unset) |
+| Field                        | Type      | Default                        | Description                                                                         |
+| ---------------------------- | --------- | ------------------------------ | ----------------------------------------------------------------------------------- |
+| `similarity_threshold`     | `float` | `0.92`                       | Cosine similarity threshold for cache hits (0.0–1.0)                               |
+| `ttl_seconds`              | `int`   | `3600`                       | Entry lifetime in seconds. `0` = never expire                                     |
+| `max_entries`              | `int`   | `10_000`                     | Max entries per semantic partition; oldest entries evicted first                    |
+| `namespace`                | `str`   | `"default"`                  | Default namespace                                                                   |
+| `embedder_model`           | `str`   | `"BAAI/bge-small-en-v1.5"`   | Local sentence-transformers model                                                   |
+| `backend`                  | `str`   | `"sqlite"`                   | `"sqlite"`, `"redis"`, `"memory"` through `LongCache`                       |
+| `db_path`                  | `str`   | `".longcache/v2/cache.db"`   | SQLite database path                                                                |
+| `redis_url`                | `str`   | `"redis://localhost:6379/0"` | Redis connection URL                                                                |
+| `track_stats`              | `bool`  | `True`                       | Track process-local hit/miss counters                                               |
+| `faiss_index_type`         | `str`   | `"flat"`                     | `"flat"` (exact) or `"hnsw"` (approximate)                                      |
+| `hnsw_m`                   | `int`   | `32`                         | HNSW connections per node (higher = more accurate, more memory)                     |
+| `hnsw_ef_search`           | `int`   | `64`                         | HNSW search depth (higher = more accurate, slower)                                  |
+| `scope_policy`             | `str`   | `"private"`                  | Trusted tenant/user scope; `tenant_shared` and `public` require explicit opt-in |
+| `cache_id`, `generation` | `str`   | `"default"`                  | Owned Redis keyspace and storage generation                                         |
+| `verification_budget`      | `int`   | `8`                          | Maximum candidates checked per lookup                                               |
+| `model`                    | `str`   | `""`                         | Legacy execution field; does not replace trusted context                            |
+| `system_prompt`            | `str`   | `""`                         | Global system prompt for composite key scoping                                      |
+| `temperature`              | `float` | `-1.0`                       | Global temperature for composite key scoping (`-1.0` = unset)                     |
 
 ---
 
@@ -586,20 +582,20 @@ Process hit/miss counters reset on restart; stored entry hit counts persist. Unm
 
 Used internally by backends and available through scoped `entries(context=...)`. `inspect()` returns a redacted decision dictionary, not a `CacheEntry`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `int \| None` | Backend-assigned unique identifier |
-| `namespace` | `str` | Canonical scoped execution partition |
-| `query` | `str` | Original query text |
-| `vector` | `np.ndarray` | 384-dim L2-normalized float32 embedding |
-| `response` | `Any` | Cached LLM response (must be JSON-serializable) |
-| `created_at` | `float` | Unix timestamp of entry creation |
-| `expires_at` | `float \| None` | Unix timestamp of expiry (`None` = no expiry) |
-| `hit_count` | `int` | Number of times this entry has been served |
-| `model` | `str` | Model identifier at write time |
-| `system_prompt` | `str` | System prompt at write time |
-| `temperature` | `float` | Temperature at write time (`-1.0` = unset) |
-| `tags` | `list[str]` | Tags for selective invalidation |
+| Field             | Type             | Description                                     |
+| ----------------- | ---------------- | ----------------------------------------------- |
+| `id`            | `int \| None`   | Backend-assigned unique identifier              |
+| `namespace`     | `str`          | Canonical scoped execution partition            |
+| `query`         | `str`          | Original query text                             |
+| `vector`        | `np.ndarray`   | 384-dim L2-normalized float32 embedding         |
+| `response`      | `Any`          | Cached LLM response (must be JSON-serializable) |
+| `created_at`    | `float`        | Unix timestamp of entry creation                |
+| `expires_at`    | `float \| None` | Unix timestamp of expiry (`None` = no expiry) |
+| `hit_count`     | `int`          | Number of times this entry has been served      |
+| `model`         | `str`          | Model identifier at write time                  |
+| `system_prompt` | `str`          | System prompt at write time                     |
+| `temperature`   | `float`        | Temperature at write time (`-1.0` = unset)    |
+| `tags`          | `list[str]`    | Tags for selective invalidation                 |
 
 ---
 
@@ -719,10 +715,10 @@ LongCache uses **BAAI/bge-small-en-v1.5** by default:
 
 ### FAISS Index
 
-| Index | Config Value | Characteristics |
-|-------|-------------|-----------------|
-| `IndexFlatIP` | `"flat"` | Exact search, deterministic, best for ≤ 100K entries |
-| `IndexHNSWFlat` | `"hnsw"` | Approximate search, sub-ms at any scale, best for 100K+ entries |
+| Index             | Config Value | Characteristics                                                 |
+| ----------------- | ------------ | --------------------------------------------------------------- |
+| `IndexFlatIP`   | `"flat"`   | Exact search, deterministic, best for ≤ 100K entries           |
+| `IndexHNSWFlat` | `"hnsw"`   | Approximate search, sub-ms at any scale, best for 100K+ entries |
 
 After TTL sweeps, namespace invalidations, or evictions, the local FAISS index is rebuilt from live backend entries. Redis storage alone does not synchronize indexes between processes.
 
@@ -744,8 +740,6 @@ Stored entry hit counts persist; process-level hit/miss counters reset on restar
 ---
 
 ## Performance
-
-Local v0.2 validation passed 372 tests on each of Python 3.11/3.12 with zero skips, the 4,800-case synthetic quality gates, all six changing-document RAG backend/index combinations, and all four paired latency gates. See [evaluation evidence and limits](docs/benchmarks.md). Hosted CI, customer-domain review, and release-candidate feedback remain external gates.
 
 Cache hit rate and savings vary with traffic, threshold, embedding model, and safety rules. Benchmark your own workload. Record hit rate, incorrect-hit rate, bypass rate, p50/p95/p99 latency, and actual provider usage before claiming cost savings.
 
@@ -803,36 +797,36 @@ longcache/
 
 ### Core (Required)
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `sentence-transformers` | `>=2.3.0` | Local embedding — BGE-small |
-| `faiss-cpu` | `>=1.7.4` | Similarity search (Flat & HNSW) |
-| `numpy` | `>=1.24.0,<2.0.0` | Vector math |
-| `torch` | CPU (via uv) | sentence-transformers runtime |
-| `click` | `>=8.1.0` | CLI framework |
+| Package                   | Version             | Purpose                         |
+| ------------------------- | ------------------- | ------------------------------- |
+| `sentence-transformers` | `>=2.3.0`         | Local embedding — BGE-small    |
+| `faiss-cpu`             | `>=1.7.4`         | Similarity search (Flat & HNSW) |
+| `numpy`                 | `>=1.24.0,<2.0.0` | Vector math                     |
+| `torch`                 | CPU (via uv)        | sentence-transformers runtime   |
+| `click`                 | `>=8.1.0`         | CLI framework                   |
 
 > **Note**: `numpy<2.0.0` is required — numpy 2.0 breaks ABI compatibility with `faiss-cpu` and `torch`.
 
 ### Optional Extras
 
-| Extra | Package(s) | Purpose |
-|-------|-----------|---------|
-| `[redis]` | `redis>=5.0.0,<6.0.0` | Redis & async Redis backends |
-| `[langchain]` | `langchain-core>=1.0.0`, `langgraph>=1.0.0` | LangChain + LangGraph |
-| `[llamaindex]` | `llama-index-core>=0.10.0` | LlamaIndex integration |
-| `[openai]` | `openai>=1.0.0,<2.0.0` | Direct OpenAI integration |
-| `[server]` | `fastapi>=0.109.0`, `starlette>=0.36.0`, `uvicorn>=0.27.0` | ASGI middleware |
-| `[all]` | All of the above | Everything |
+| Extra            | Package(s)                                                       | Purpose                      |
+| ---------------- | ---------------------------------------------------------------- | ---------------------------- |
+| `[redis]`      | `redis>=5.0.0,<6.0.0`                                          | Redis & async Redis backends |
+| `[langchain]`  | `langchain-core>=1.0.0`, `langgraph>=1.0.0`                  | LangChain + LangGraph        |
+| `[llamaindex]` | `llama-index-core>=0.10.0`                                     | LlamaIndex integration       |
+| `[openai]`     | `openai>=1.0.0,<2.0.0`                                         | Direct OpenAI integration    |
+| `[server]`     | `fastapi>=0.109.0`, `starlette>=0.36.0`, `uvicorn>=0.27.0` | ASGI middleware              |
+| `[all]`        | All of the above                                                 | Everything                   |
 
 ### Development
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `pytest` | `>=8.0.0` | Test runner |
+| Package            | Version      | Purpose            |
+| ------------------ | ------------ | ------------------ |
+| `pytest`         | `>=8.0.0`  | Test runner        |
 | `pytest-asyncio` | `>=0.23.0` | Async test support |
-| `pytest-cov` | `>=5.0.0` | Coverage reporting |
-| `httpx` | `>=0.27.0` | ASGI test client |
-| `ruff` | `>=0.4.0` | Linter / formatter |
+| `pytest-cov`     | `>=5.0.0`  | Coverage reporting |
+| `httpx`          | `>=0.27.0` | ASGI test client   |
+| `ruff`           | `>=0.4.0`  | Linter / formatter |
 
 ---
 
