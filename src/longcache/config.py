@@ -8,8 +8,7 @@ validation, and factory methods for construction from dicts or env vars.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, asdict
-from typing import Optional
+from dataclasses import dataclass, asdict
 
 
 @dataclass
@@ -64,6 +63,10 @@ class CacheConfig:
                 f"backend must be one of 'sqlite', 'redis', 'async_redis', 'memory', "
                 f"got '{self.backend}'"
             )
+        if self.faiss_index_type not in ("flat", "hnsw"):
+            raise ValueError("faiss_index_type must be 'flat' or 'hnsw'")
+        if self.hnsw_m < 1 or self.hnsw_ef_search < 1:
+            raise ValueError("hnsw_m and hnsw_ef_search must be positive")
 
     @classmethod
     def from_dict(cls, data: dict) -> CacheConfig:

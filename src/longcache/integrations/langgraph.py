@@ -6,10 +6,9 @@ Provides CachedState wrapper for semantic caching of agent/graph states.
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any, Optional
+from typing import Any
 
-from longcache import LongCache, CacheConfig
+from longcache import LongCache
 
 
 class CachedState:

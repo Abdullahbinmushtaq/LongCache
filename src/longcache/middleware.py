@@ -9,10 +9,10 @@ auto-caches responses. Drop-in middleware for any Starlette app.
 from __future__ import annotations
 
 import json
-import time
 from typing import Any, Callable, Optional, Set
 
 from longcache import LongCache, CacheConfig
+from longcache.integrations.openai import _request_context
 
 
 class LongCacheMiddleware:
@@ -90,6 +90,13 @@ class LongCacheMiddleware:
         # Read the request body
         body = await self._read_body(receive)
 
+        # User identity is not part of the v0.1.1 cache key. Keep authenticated
+        # requests out of a shared namespace until trusted tenant scoping exists.
+        header_names = {name.lower() for name, _ in scope.get("headers", [])}
+        if header_names & {b"authorization", b"cookie", b"x-api-key"}:
+            await self._send_passthrough(scope, body, send)
+            return
+
         try:
             request_data = json.loads(body) if body else {}
         except json.JSONDecodeError:
@@ -97,14 +104,20 @@ class LongCacheMiddleware:
             await self._send_passthrough(scope, body, send)
             return
 
-        # Extract the user query from messages
-        query = self._extract_query(request_data)
-        if not query:
+        context = _request_context(request_data) if isinstance(request_data, dict) else None
+        if context is None:
             await self._send_passthrough(scope, body, send)
             return
+        query, model, instructions, temperature = context
 
         # Check cache
-        cached = self.cache.get(query, namespace=self._namespace)
+        cached = await self.cache.aget(
+            query,
+            namespace=f"{self._namespace}:single-turn-v1",
+            model=model,
+            system_prompt=instructions,
+            temperature=temperature,
+        )
         if cached is not None:
             await self._send_cached_response(cached, send)
             return
@@ -113,8 +126,32 @@ class LongCacheMiddleware:
         response_data = await self._forward_and_capture(scope, body, send)
 
         # Cache the response
-        if response_data is not None:
-            self.cache.set(query, response_data, namespace=self._namespace)
+        if self._cacheable_response(response_data):
+            await self.cache.aset(
+                query,
+                response_data,
+                namespace=f"{self._namespace}:single-turn-v1",
+                model=model,
+                system_prompt=instructions,
+                temperature=temperature,
+            )
+
+    @staticmethod
+    def _cacheable_response(response: Any) -> bool:
+        if not isinstance(response, dict):
+            return False
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return False
+        for choice in choices:
+            if not isinstance(choice, dict) or choice.get("finish_reason") not in (None, "stop"):
+                return False
+            message = choice.get("message")
+            if not isinstance(message, dict) or message.get("refusal") or message.get("tool_calls"):
+                return False
+            if not isinstance(message.get("content"), str):
+                return False
+        return True
 
     def _extract_query(self, request_data: dict) -> str:
         """
@@ -232,10 +269,7 @@ class LongCacheMiddleware:
                 "more_body": False,
             }
 
-        try:
-            await self.app(scope, receive_with_body, capturing_send)
-        except Exception:
-            return None
+        await self.app(scope, receive_with_body, capturing_send)
 
         if response_status != 200:
             return None

@@ -7,9 +7,8 @@ to any LangChain LLM or LCEL chain with zero code changes.
 
 from __future__ import annotations
 
-import asyncio
 import re
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from longcache import LongCache, CacheConfig
 

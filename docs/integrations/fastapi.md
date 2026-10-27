@@ -22,17 +22,15 @@ from longcache.middleware import LongCacheMiddleware
 app = FastAPI(title="LLM Gateway API")
 
 # Initialize cache (SQLite or Redis)
-cache = LongCache(CacheConfig(
-    similarity_threshold=0.92,
-    namespace="api_gateway"
-))
+cache = LongCache(CacheConfig(similarity_threshold=0.92, namespace="api_gateway"))
 
 # Add middleware
 app.add_middleware(
     LongCacheMiddleware,
     cache=cache,
-    routes={"/v1/chat/completions", "/api/chat"},  # Target endpoints
+    cached_routes={"/v1/chat/completions", "/api/chat"},  # Target endpoints
 )
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -40,9 +38,7 @@ async def chat_completions(request: Request):
     # Your upstream LLM call here (e.g. LiteLLM, vLLM, OpenAI, Ollama)
     return {
         "id": "chatcmpl-123",
-        "choices": [
-            {"message": {"role": "assistant", "content": "Hello from upstream model!"}}
-        ]
+        "choices": [{"message": {"role": "assistant", "content": "Hello from upstream model!"}}],
     }
 ```
 
@@ -54,6 +50,10 @@ When `LongCacheMiddleware` serves a cached response, it injects observability he
 
 | Header | Value | Meaning |
 |---|---|---|
-| `X-LongCache-Status` | `HIT` or `MISS` | Whether the response was served from cache |
-| `X-LongCache-Similarity` | `0.942` | The cosine similarity of the matched query |
-| `X-LongCache-Latency-Saved-Ms` | `1850` | Estimated milliseconds saved vs upstream call |
+| `X-LongCache` | `HIT` | Present when a cached response is served; absent on a provider miss or bypass |
+
+## Supported requests in v0.1.1
+
+Eligible requests contain a model and a single text user message, with optional system/developer instructions and temperature. Multi-turn, streaming, tool, multimodal, and additional request options bypass caching. Requests with Authorization, Cookie, or X-API-Key headers also bypass caching because automatic user/tenant scoping is not implemented.
+
+The upstream response is cached only for successful JSON chat completions containing text and no refusal or tool calls. The supported context fields are included in the cache identity, and entries from the older middleware namespace are not reused.

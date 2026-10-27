@@ -17,9 +17,7 @@ import logging
 import hashlib
 import json
 import threading as _threading
-from typing import Any, Callable, Optional, AsyncGenerator, Generator
-
-_log = logging.getLogger(__name__)
+from typing import Any, Callable, Optional
 
 from longcache.config import CacheConfig
 from longcache.core.embedder import LocalEmbedder
@@ -28,13 +26,15 @@ from longcache.core.entry import CacheEntry
 from longcache.backends.sqlite import SQLiteCacheBackend
 from longcache.backends.memory import InMemoryCacheBackend
 
+_log = logging.getLogger(__name__)
+
 
 class LongCache:
     """
     Semantic similarity cache for LLM/RAG pipelines.
 
     Intercepts queries before they reach expensive LLM calls,
-    embeds the query locally (sub-5ms with MiniLM), and checks
+    embeds the query locally, and checks
     cosine similarity against a rolling FAISS/SQLite cache.
 
     On HIT (similarity > threshold): returns cached response instantly.
@@ -63,6 +63,11 @@ class LongCache:
             config: CacheConfig instance. Uses sensible defaults if not provided.
         """
         self.config = config or CacheConfig()
+        if self.config.backend == "async_redis":
+            raise ValueError(
+                "async_redis is not supported through LongCache yet; "
+                "use redis or the standalone AsyncRedisCacheBackend"
+            )
         self.embedder = LocalEmbedder(self.config.embedder_model)
         self.backend = self._init_backend()
         self.index = SimilarityIndex(self.backend, self.config)
@@ -72,6 +77,8 @@ class LongCache:
             "total_saved_ms": 0.0,
         }
         self._stats_lock = _threading.Lock()
+        self._mutation_lock = _threading.RLock()
+        self._closed = False
 
         # Load persisted stats from backend if available
         if hasattr(self.backend, "load_stats"):
@@ -90,6 +97,24 @@ class LongCache:
         if hasattr(self, "_stop_event"):
             self._stop_event.set()
 
+    def close(self) -> None:
+        """Stop background work and close the current thread's backend connection."""
+        if self._closed:
+            return
+        self._closed = True
+        if hasattr(self, "_stop_event"):
+            self._stop_event.set()
+            if _threading.current_thread() is not self._sweep_thread:
+                self._sweep_thread.join(timeout=5)
+        if hasattr(self.backend, "close"):
+            self.backend.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
     def _start_sweep_thread(self) -> None:
         """Start background thread that periodically deletes expired entries."""
         if self.config.ttl_seconds == 0:
@@ -102,16 +127,19 @@ class LongCache:
                     break
                 try:
                     if hasattr(self.backend, "sweep_expired"):
-                        deleted = self.backend.sweep_expired()
-                        if deleted > 0:
-                            _log.debug("TTL sweep: deleted %d expired entries", deleted)
-                            self._rebuild_index_from_backend()
+                        with self._mutation_lock:
+                            deleted = self.backend.sweep_expired()
+                            if deleted > 0:
+                                _log.debug("TTL sweep: deleted %d expired entries", deleted)
+                                self._rebuild_index_from_backend()
                 except Exception as e:
                     _log.warning("TTL sweep error: %s", e)
 
         self._stop_event = _threading.Event()
-        t = _threading.Thread(target=sweeper, name="longcache-sweeper", daemon=True)
-        t.start()
+        self._sweep_thread = _threading.Thread(
+            target=sweeper, name="longcache-sweeper", daemon=True
+        )
+        self._sweep_thread.start()
 
     def _init_backend(self):
         """
@@ -137,18 +165,6 @@ class LongCache:
                 redis_url=self.config.redis_url,
                 max_entries=self.config.max_entries,
             )
-        elif self.config.backend == "async_redis":
-            try:
-                from longcache.backends.async_redis import AsyncRedisCacheBackend
-            except ImportError:
-                raise ImportError(
-                    "Async Redis backend requires the 'redis' extra. "
-                    "Install with: uv pip install longcache[redis]"
-                )
-            return AsyncRedisCacheBackend(
-                redis_url=self.config.redis_url,
-                max_entries=self.config.max_entries,
-            )
         elif self.config.backend == "memory":
             return InMemoryCacheBackend(
                 max_entries=self.config.max_entries,
@@ -163,11 +179,9 @@ class LongCache:
         Called on startup, after sweeping expired entries, or after evictions
         so that cached entries are cleanly re-indexed without duplicate vector accumulation.
         """
-        try:
-            entries = self.backend.list_entries(self.config.namespace)
-            self.index.rebuild(entries or [])
-        except Exception as e:
-            _log.warning("Index rebuild failed: %s — starting with empty index.", e)
+        with self._mutation_lock:
+            entries = self.backend.list_all_entries()
+            self.index.rebuild(entries)
 
     def _build_context_hash(
         self,
@@ -278,18 +292,21 @@ class LongCache:
         loop = asyncio.get_event_loop()
         ns = self._effective_namespace(namespace, model, system_prompt, temperature)
         vector = await loop.run_in_executor(None, self.embedder.embed, query)
-        entry = self.index.find_similar(
-            vector, threshold=self.config.similarity_threshold, namespace=ns
+        entry = await loop.run_in_executor(
+            None,
+            lambda: self.index.find_similar(
+                vector, threshold=self.config.similarity_threshold, namespace=ns
+            ),
         )
         if entry is not None and not entry.is_expired():
             if self.config.track_stats:
                 with self._stats_lock:
                     self._stats["hits"] += 1
                 if hasattr(self.backend, "increment_hits"):
-                    if asyncio.iscoroutinefunction(getattr(self.backend, "increment_hits")):
+                    if inspect.iscoroutinefunction(getattr(self.backend, "increment_hits")):
                         await self.backend.increment_hits()
                     else:
-                        self.backend.increment_hits()
+                        await loop.run_in_executor(None, self.backend.increment_hits)
             _log.debug("Cache HIT  ns=%s query=%r", ns, query[:60])
             return entry.response
 
@@ -297,10 +314,10 @@ class LongCache:
             with self._stats_lock:
                 self._stats["misses"] += 1
             if hasattr(self.backend, "increment_misses"):
-                if asyncio.iscoroutinefunction(getattr(self.backend, "increment_misses")):
+                if inspect.iscoroutinefunction(getattr(self.backend, "increment_misses")):
                     await self.backend.increment_misses(0.0)
                 else:
-                    self.backend.increment_misses(0.0)
+                    await loop.run_in_executor(None, self.backend.increment_misses, 0.0)
 
         _log.debug("Cache MISS ns=%s query=%r", ns, query[:60])
         return None
@@ -355,14 +372,11 @@ class LongCache:
         )
 
         # Store in backend (assigns entry.id)
-        entry_id = self.backend.store(entry)
-        entry.id = entry_id
-
-        # Add to FAISS index
-        self.index.add(vector, entry_id)
-
-        # Enforce max_entries eviction
-        self._evict_if_needed(ns)
+        with self._mutation_lock:
+            entry_id = self.backend.store(entry)
+            entry.id = entry_id
+            self.index.add(vector, entry_id)
+            self._evict_if_needed(ns)
 
         _log.debug("Cache SET  ns=%s ttl=%s query=%r", ns, effective_ttl, query[:60])
 
@@ -397,15 +411,15 @@ class LongCache:
             temperature=temperature if temperature is not None else self.config.temperature,
             tags=list(tags or []),
         )
-        # Handle async_redis case where store is a coroutine
-        if asyncio.iscoroutinefunction(self.backend.store):
-            entry_id = await self.backend.store(entry)
-        else:
-            entry_id = self.backend.store(entry)
 
-        entry.id = entry_id
-        await self.index.async_add(vector, entry_id)
-        self._evict_if_needed(ns)
+        def store_and_index():
+            with self._mutation_lock:
+                entry_id = self.backend.store(entry)
+                entry.id = entry_id
+                self.index.add(vector, entry_id)
+                self._evict_if_needed(ns)
+
+        await loop.run_in_executor(None, store_and_index)
 
         _log.debug("Cache ASET ns=%s ttl=%s query=%r", ns, effective_ttl, query[:60])
 
@@ -432,9 +446,11 @@ class LongCache:
         """
 
         def decorator(fn: Callable) -> Callable:
-            if asyncio.iscoroutinefunction(fn):
+            if inspect.iscoroutinefunction(fn):
 
                 async def async_wrapper(query: str, *args, **kwargs):
+                    if args or kwargs:
+                        return await fn(query, *args, **kwargs)
                     cached_result = await self.aget(
                         query,
                         namespace=namespace,
@@ -466,7 +482,7 @@ class LongCache:
                             self._stats["misses"] += 1
                             self._stats["total_saved_ms"] += elapsed_ms
                         if hasattr(self.backend, "increment_misses"):
-                            if asyncio.iscoroutinefunction(
+                            if inspect.iscoroutinefunction(
                                 getattr(self.backend, "increment_misses")
                             ):
                                 await self.backend.increment_misses(elapsed_ms)
@@ -481,6 +497,8 @@ class LongCache:
             else:
 
                 def wrapper(query: str, *args, **kwargs):
+                    if args or kwargs:
+                        return fn(query, *args, **kwargs)
                     cached_result = self.get(
                         query,
                         namespace=namespace,
@@ -547,6 +565,10 @@ class LongCache:
             if inspect.isasyncgenfunction(fn):
 
                 async def async_stream_wrapper(query: str, *args, **kwargs):
+                    if args or kwargs:
+                        async for token in fn(query, *args, **kwargs):
+                            yield token
+                        return
                     cached_result = await self.aget(
                         query,
                         namespace=namespace,
@@ -592,7 +614,7 @@ class LongCache:
                             self._stats["misses"] += 1
                             self._stats["total_saved_ms"] += elapsed_ms
                         if hasattr(self.backend, "increment_misses"):
-                            if asyncio.iscoroutinefunction(
+                            if inspect.iscoroutinefunction(
                                 getattr(self.backend, "increment_misses")
                             ):
                                 await self.backend.increment_misses(elapsed_ms)
@@ -606,6 +628,9 @@ class LongCache:
             else:
 
                 def sync_stream_wrapper(query: str, *args, **kwargs):
+                    if args or kwargs:
+                        yield from fn(query, *args, **kwargs)
+                        return
                     cached_result = self.get(
                         query,
                         namespace=namespace,
@@ -685,10 +710,9 @@ class LongCache:
             The number of entries deleted.
         """
         ns = self._effective_namespace(namespace, model, system_prompt, temperature)
-        count = self.backend.delete_namespace(ns)
-
-        # Rebuild index after namespace deletion
-        self._rebuild_index_from_backend()
+        with self._mutation_lock:
+            count = self.backend.delete_namespace(ns)
+            self._rebuild_index_from_backend()
 
         return count
 
@@ -714,9 +738,10 @@ class LongCache:
             The number of entries deleted.
         """
         ns = self._effective_namespace(namespace, model, system_prompt, temperature)
-        count = self.backend.delete_by_tag(tag, ns)
-        if count > 0:
-            self._rebuild_index_from_backend()
+        with self._mutation_lock:
+            count = self.backend.delete_by_tag(tag, ns)
+            if count > 0:
+                self._rebuild_index_from_backend()
         return count
 
     def clear(self) -> int:
@@ -728,10 +753,9 @@ class LongCache:
         Returns:
             The total number of entries deleted.
         """
-        count = self.backend.clear()
-
-        # Reset FAISS index
-        self.index.rebuild([])
+        with self._mutation_lock:
+            count = self.backend.clear()
+            self.index.rebuild([])
 
         # Reset stats
         if self.config.track_stats:
@@ -823,6 +847,7 @@ class LongCache:
             vector,
             threshold=0.0,  # Find the nearest regardless of threshold
             namespace=ns,
+            record_hit=False,
         )
 
         if entry is None:

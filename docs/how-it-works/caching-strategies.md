@@ -54,7 +54,10 @@ from longcache import LongCache
 cache = LongCache()
 
 faq_knowledge_base = [
-    ("What payment methods do you accept?", "We accept Visa, Mastercard, AMEX, PayPal, and Apple Pay."),
+    (
+        "What payment methods do you accept?",
+        "We accept Visa, Mastercard, AMEX, PayPal, and Apple Pay.",
+    ),
     ("How long does shipping take?", "Standard shipping takes 3-5 business days."),
 ]
 

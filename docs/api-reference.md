@@ -63,7 +63,7 @@ Returns real-time cache statistics:
     "hit_rate": 0.625,
     "total_entries": 850,
     "estimated_tokens_saved": 710000,
-    "estimated_cost_saved_usd": 2.13
+    "estimated_cost_saved_usd": 2.13,
 }
 ```
 
@@ -96,7 +96,7 @@ config = CacheConfig(
     hnsw_ef_search=64,
     model="",
     system_prompt="",
-    temperature=-1.0
+    temperature=-1.0,
 )
 ```
 
@@ -109,7 +109,7 @@ config = CacheConfig(
 | `max_entries` | `int` | `10000` | Maximum entries stored per namespace before eviction |
 | `namespace` | `str` | `"default"` | Logical partition namespace |
 | `embedder_model` | `str` | `"BAAI/bge-small-en-v1.5"` | HuggingFace sentence-transformers model name |
-| `backend` | `str` | `"sqlite"` | Storage backend: `"sqlite"`, `"redis"`, `"async_redis"`, or `"memory"` |
+| `backend` | `str` | `"sqlite"` | Supported storage backend: `"sqlite"`, `"redis"`, or `"memory"`; `"async_redis"` fails fast in v0.1.1 |
 | `db_path` | `str` | `".longcache/cache.db"` | Path to SQLite database file |
 | `redis_url` | `str` | `"redis://localhost:6379/0"` | Redis connection URL |
 | `track_stats` | `bool` | `True` | Track hits, misses, and cost statistics |
@@ -138,12 +138,14 @@ vector = embedder.embed("What is LongCache?")  # Returns np.ndarray shape (384,)
 ### `LongCacheMiddleware`
 ```python
 from longcache.middleware import LongCacheMiddleware
-app.add_middleware(LongCacheMiddleware, cache=cache, routes={"/v1/chat/completions"})
+
+app.add_middleware(LongCacheMiddleware, cache=cache, cached_routes={"/v1/chat/completions"})
 ```
 
 ### `CachedLLM` & `CachedChain`
 ```python
 from longcache.integrations.langchain import CachedLLM, CachedChain
+
 cached_llm = CachedLLM(llm, cache=cache)
 cached_chain = CachedChain(chain, cache=cache)
 ```
@@ -151,11 +153,13 @@ cached_chain = CachedChain(chain, cache=cache)
 ### `CachedQueryEngine`
 ```python
 from longcache.integrations.llamaindex import CachedQueryEngine
+
 cached_engine = CachedQueryEngine(query_engine, cache=cache)
 ```
 
 ### `CachedOpenAI`
 ```python
 from longcache.integrations.openai import CachedOpenAI
+
 cached_client = CachedOpenAI(openai_client, cache=cache)
 ```

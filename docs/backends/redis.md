@@ -1,6 +1,6 @@
 # Redis Backend
 
-For multi-container deployments, Kubernetes clusters, or horizontally scaled workers, LongCache provides high-throughput Redis backends.
+LongCache can persist responses in Redis. In v0.1.1, use one LongCache process per Redis-backed cache: each process owns a local FAISS index, and Redis does not synchronize indexes between workers.
 
 ## Installation
 
@@ -26,31 +26,17 @@ config = CacheConfig(
 
 cache = LongCache(config)
 
+
 @cache.cached
 def ask(query: str) -> str:
     return call_model(query)
 ```
 
-## Asynchronous Redis (`async_redis`)
+## Async support
 
-For `asyncio`-first frameworks like FastAPI, Starlette, or Sanic:
+`LongCache(CacheConfig(backend="async_redis"))` raises a clear error in v0.1.1 because the async backend is not connected to the complete cache/index lifecycle. `AsyncRedisCacheBackend` remains available for standalone experimental use. Use `backend="redis"` for the supported public cache path.
 
-```python
-import asyncio
-from longcache import LongCache, CacheConfig
-
-config = CacheConfig(
-    backend="async_redis",
-    redis_url="redis://localhost:6379/0",
-    namespace="async_api"
-)
-
-cache = LongCache(config)
-
-@cache.cached
-async def ask_async(query: str) -> str:
-    return await async_llm_client.generate(query)
-```
+Close cache instances with `cache.close()` or a `with LongCache(config) as cache:` block to stop background maintenance and release backend resources.
 
 ## Local Development with Docker
 
@@ -58,4 +44,5 @@ Run Redis locally with Docker Compose:
 
 ```bash
 docker compose up -d redis
+LONGCACHE_TEST_REDIS_URL=redis://localhost:6379/0 uv run --no-sync pytest tests/test_redis_backend.py -q
 ```

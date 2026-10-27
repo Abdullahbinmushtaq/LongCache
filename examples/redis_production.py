@@ -1,9 +1,9 @@
 """
-Redis backend + LongCache production example.
+Redis backend + LongCache single-process example.
 
-Demonstrates how to use Redis as the cache backend for
-multi-instance production deployments. All instances share
-the same Redis cache, so cache hits work across servers.
+Demonstrates Redis as shared response storage for one LongCache process.
+Each process maintains its own FAISS index; writes by another process
+are not discovered automatically in v0.1.1.
 
 Prerequisites:
     1. Redis server running locally or accessible via URL

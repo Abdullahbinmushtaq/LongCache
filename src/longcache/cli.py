@@ -15,12 +15,12 @@ Usage:
 from __future__ import annotations
 
 import json
-import sys
 from typing import Optional
 
 import click
 
 from longcache.config import CacheConfig
+from longcache import __version__
 
 
 def _get_cache(config: Optional[CacheConfig] = None):
@@ -31,7 +31,7 @@ def _get_cache(config: Optional[CacheConfig] = None):
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="longcache")
+@click.version_option(version=__version__, prog_name="longcache")
 def main():
     """
     LongCache — Semantic similarity cache for LLM/RAG pipelines.

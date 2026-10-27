@@ -1,9 +1,7 @@
 """Tests for the FastAPI/Starlette middleware."""
 
-import json
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 from longcache.config import CacheConfig
 
@@ -61,8 +59,8 @@ class TestStreamingCacheAdapter:
 
         # Second call — HIT, should replay from cache
         tokens2 = list(adapter.stream("test query"))
-        assert len(tokens2) > 0
         assert call_count == 1  # Source function should NOT be called again
+        assert "".join(tokens2) == "".join(tokens1)
 
     @patch("longcache.core.cache.LocalEmbedder")
     def test_stream_different_queries(self, MockEmbedder):
@@ -82,8 +80,9 @@ class TestStreamingCacheAdapter:
 
         adapter = StreamingCacheAdapter(cache, mock_stream_func, replay_delay=0)
 
-        assert len(list(adapter.stream("query A"))) > 0
-        assert len(list(adapter.stream("query B"))) > 0
+        tokens1 = list(adapter.stream("query A"))
+        tokens2 = list(adapter.stream("query B"))
+        assert tokens1 != tokens2
 
         # Both should be MISS (different queries)
         # The stream_func should have been called twice

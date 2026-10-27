@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import numpy as np
-import pytest
 
 from longcache.config import CacheConfig
 

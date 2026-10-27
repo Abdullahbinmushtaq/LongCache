@@ -73,7 +73,10 @@ class TestLongCacheMiddleware:
         transport = ASGITransport(app=app)
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            payload = {"messages": [{"role": "user", "content": "What is the refund policy?"}]}
+            payload = {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "What is the refund policy?"}],
+            }
 
             # First request — MISS, should hit the upstream handler
             resp1 = await client.post("/v1/chat/completions", json=payload)
@@ -91,6 +94,31 @@ class TestLongCacheMiddleware:
             assert resp2.headers.get("x-longcache") == "HIT"
             assert call_count["n"] == 1
             assert resp2.json() == body1
+
+    async def test_different_model_or_history_bypasses_reuse(self, cache):
+        app, call_count = _build_app(cache)
+        transport = ASGITransport(app=app)
+        messages = [{"role": "user", "content": "same question"}]
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post("/v1/chat/completions", json={"model": "a", "messages": messages})
+            await client.post("/v1/chat/completions", json={"model": "b", "messages": messages})
+            history = [{"role": "user", "content": "earlier"}, *messages]
+            await client.post("/v1/chat/completions", json={"model": "a", "messages": history})
+            await client.post("/v1/chat/completions", json={"model": "a", "messages": history})
+        assert call_count["n"] == 4
+
+    async def test_authenticated_requests_bypass_shared_cache(self, cache):
+        app, call_count = _build_app(cache)
+        transport = ASGITransport(app=app)
+        payload = {"model": "a", "messages": [{"role": "user", "content": "question"}]}
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            for _ in range(2):
+                await client.post(
+                    "/v1/chat/completions",
+                    json=payload,
+                    headers={"authorization": "Bearer private-token"},
+                )
+        assert call_count["n"] == 2
 
     async def test_uncached_route_passes_through(self, cache):
         app, call_count = _build_app(cache)

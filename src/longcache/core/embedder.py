@@ -2,15 +2,13 @@
 Local embedding engine for LongCache.
 
 Uses sentence-transformers to generate embeddings locally with no API calls.
-The default model (all-MiniLM-L6-v2) produces 384-dimensional vectors
-in under 5ms on modern hardware.
+The default model (BAAI/bge-small-en-v1.5) produces 384-dimensional vectors.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from typing import Optional
 
 import numpy as np
 
@@ -29,7 +27,7 @@ class LocalEmbedder(BaseEmbedder):
     Usage:
         embedder = LocalEmbedder()
         vector = embedder.embed("What is your refund policy?")
-        # vector.shape = (384,) for MiniLM-L6-v2
+        # vector.shape = (384,) for BGE-small
     """
 
     # Class-level cache for model instances (singleton per model name)
@@ -64,7 +62,7 @@ class LocalEmbedder(BaseEmbedder):
 
         Args:
             model_name: The sentence-transformers model identifier.
-                Defaults to all-MiniLM-L6-v2 (384-dim, sub-5ms).
+                Defaults to BAAI/bge-small-en-v1.5 (384 dimensions).
         """
         # __new__ handles actual initialization; __init__ just ensures
         # the model name is set (idempotent for singleton)
