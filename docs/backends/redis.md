@@ -26,6 +26,7 @@ config = CacheConfig(
 
 cache = LongCache(config)
 
+
 @cache.cached
 def ask(query: str) -> str:
     return call_model(query)

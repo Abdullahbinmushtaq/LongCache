@@ -68,9 +68,11 @@ from longcache import LongCache
 
 cache = LongCache()
 
+
 @cache.cached
 def my_rag_chain(query: str) -> str:
-    return expensive_llm_call(query)   # Your retrieval + LLM pipeline
+    return expensive_llm_call(query)  # Your retrieval + LLM pipeline
+
 
 # First call: MISS → runs the full pipeline
 result1 = my_rag_chain("What is your refund policy?")
@@ -143,22 +145,22 @@ All settings are controlled via the `CacheConfig` dataclass:
 from longcache import LongCache, CacheConfig
 
 config = CacheConfig(
-    similarity_threshold=0.92,           # 0.0–1.0; higher = stricter matching
-    ttl_seconds=3600,                    # Entry lifetime in seconds (0 = never expire)
-    max_entries=10_000,                  # Max entries per namespace (LRU eviction)
-    namespace="default",                 # Logical isolation group
+    similarity_threshold=0.92,  # 0.0–1.0; higher = stricter matching
+    ttl_seconds=3600,  # Entry lifetime in seconds (0 = never expire)
+    max_entries=10_000,  # Max entries per namespace (LRU eviction)
+    namespace="default",  # Logical isolation group
     embedder_model="BAAI/bge-small-en-v1.5",  # Local embedding model
-    backend="sqlite",                    # "sqlite" | "redis" | "memory"
-    db_path=".longcache/cache.db",       # SQLite path (auto-creates parent dirs)
-    redis_url="redis://localhost:6379/0",# Redis connection URL
-    track_stats=True,                    # Track hits, misses, and cost savings
-    faiss_index_type="flat",             # "flat" (exact) | "hnsw" (approximate, faster at scale)
-    hnsw_m=32,                           # HNSW connections per node
-    hnsw_ef_search=64,                   # HNSW search depth
+    backend="sqlite",  # "sqlite" | "redis" | "memory"
+    db_path=".longcache/cache.db",  # SQLite path (auto-creates parent dirs)
+    redis_url="redis://localhost:6379/0",  # Redis connection URL
+    track_stats=True,  # Track hits, misses, and cost savings
+    faiss_index_type="flat",  # "flat" (exact) | "hnsw" (approximate, faster at scale)
+    hnsw_m=32,  # HNSW connections per node
+    hnsw_ef_search=64,  # HNSW search depth
     # Composite key context (isolates entries per model/persona)
-    model="",                            # LLM model identifier (e.g. "gpt-4o")
-    system_prompt="",                    # System prompt string
-    temperature=-1.0,                    # Sampling temperature (-1.0 = unset)
+    model="",  # LLM model identifier (e.g. "gpt-4o")
+    system_prompt="",  # System prompt string
+    temperature=-1.0,  # Sampling temperature (-1.0 = unset)
 )
 
 cache = LongCache(config)
@@ -167,11 +169,13 @@ cache = LongCache(config)
 ### From a Dictionary
 
 ```python
-config = CacheConfig.from_dict({
-    "similarity_threshold": 0.90,
-    "backend": "redis",
-    "ttl_seconds": 7200,
-})
+config = CacheConfig.from_dict(
+    {
+        "similarity_threshold": 0.90,
+        "backend": "redis",
+        "ttl_seconds": 7200,
+    }
+)
 ```
 
 ### From Environment Variables
@@ -185,7 +189,7 @@ export LONGCACHE_MODEL=gpt-4o
 ```
 
 ```python
-config = CacheConfig.from_env()   # Reads all LONGCACHE_* env vars automatically
+config = CacheConfig.from_env()  # Reads all LONGCACHE_* env vars automatically
 cache = LongCache(config)
 ```
 
@@ -245,10 +249,12 @@ cache = LongCache(config)
 ### SQLite (Default — Zero External Dependencies)
 
 ```python
-cache = LongCache(CacheConfig(
-    backend="sqlite",
-    db_path=".longcache/cache.db",   # Auto-creates parent directories
-))
+cache = LongCache(
+    CacheConfig(
+        backend="sqlite",
+        db_path=".longcache/cache.db",  # Auto-creates parent directories
+    )
+)
 ```
 
 | | |
@@ -264,11 +270,13 @@ uv pip install longcache[redis]
 ```
 
 ```python
-cache = LongCache(CacheConfig(
-    backend="redis",
-    redis_url="redis://localhost:6379/0",
-    max_entries=100_000,
-))
+cache = LongCache(
+    CacheConfig(
+        backend="redis",
+        redis_url="redis://localhost:6379/0",
+        max_entries=100_000,
+    )
+)
 ```
 
 | | |
@@ -311,13 +319,13 @@ from longcache.integrations.langchain import CachedLLM
 
 llm = CachedLLM(ChatOpenAI(model="gpt-4o"), cache=LongCache())
 
-response = llm.invoke("What is the refund policy?")       # sync
-response = await llm.ainvoke("What is the refund policy?") # async
+response = llm.invoke("What is the refund policy?")  # sync
+response = await llm.ainvoke("What is the refund policy?")  # async
 
-for chunk in llm.stream("What is RAG?"):                  # sync streaming
+for chunk in llm.stream("What is RAG?"):  # sync streaming
     print(chunk, end="")
 
-async for chunk in llm.astream("What is RAG?"):           # async streaming
+async for chunk in llm.astream("What is RAG?"):  # async streaming
     print(chunk, end="")
 ```
 
@@ -345,16 +353,20 @@ from longcache.integrations.langgraph import CachedState
 
 cache = LongCache()
 
+
 def cache_node(state: dict) -> dict:
     return CachedState.check(state, cache, query_key="messages")
+
 
 def llm_node(state: dict) -> dict:
     response = my_llm_call(state["messages"])
     CachedState.save(state, response, cache)
     return {"response": response}
 
+
 def should_use_llm(state: dict) -> str:
     return "llm" if not state.get("__cache_hit") else "end"
+
 
 graph = StateGraph(dict)
 graph.add_node("cache", cache_node)
@@ -429,9 +441,11 @@ app.add_middleware(
 ```python
 from longcache.middleware import StreamingCacheAdapter
 
+
 def my_stream(query: str):
     for chunk in llm.stream(query):
         yield chunk
+
 
 adapter = StreamingCacheAdapter(cache, my_stream)
 
@@ -499,15 +513,14 @@ Main facade class. Accepts an optional `CacheConfig`; uses development defaults 
 
 ```python
 @cache.cached(
-    namespace="faq",         # Logical isolation group
-    ttl=7200,                # Entry lifetime override (seconds)
-    tags=["billing"],        # Tags for selective invalidation
-    model="gpt-4o",          # Scopes entries to this model
-    system_prompt="...",     # Scopes entries to this system prompt
-    temperature=0.0,         # Scopes entries to this temperature
+    namespace="faq",  # Logical isolation group
+    ttl=7200,  # Entry lifetime override (seconds)
+    tags=["billing"],  # Tags for selective invalidation
+    model="gpt-4o",  # Scopes entries to this model
+    system_prompt="...",  # Scopes entries to this system prompt
+    temperature=0.0,  # Scopes entries to this temperature
 )
-def my_chain(query: str) -> str:
-    ...
+def my_chain(query: str) -> str: ...
 ```
 
 Works identically for `@cache.cached_stream`.
@@ -516,13 +529,13 @@ Works identically for `@cache.cached_stream`.
 
 ```python
 {
-    "hits":                    420,
-    "misses":                  180,
-    "hit_rate":                0.70,
-    "total_saved_ms":          840_000.0,
-    "estimated_tokens_saved":  630_000,
+    "hits": 420,
+    "misses": 180,
+    "hit_rate": 0.70,
+    "total_saved_ms": 840_000.0,
+    "estimated_tokens_saved": 630_000,
     "estimated_cost_saved_usd": 18.90,
-    "total_entries":           95,
+    "total_entries": 95,
 }
 ```
 
@@ -578,16 +591,16 @@ Returned by `inspect()` and used internally by all backends.
 ### Per-Namespace Threshold Tuning
 
 ```python
-faq_cache = LongCache(CacheConfig(namespace="faq",     similarity_threshold=0.95))
+faq_cache = LongCache(CacheConfig(namespace="faq", similarity_threshold=0.95))
 chat_cache = LongCache(CacheConfig(namespace="general", similarity_threshold=0.85))
 ```
 
 ### Per-Entry TTL Override
 
 ```python
-cache.set("volatile_query", response, ttl=300)      # 5-minute TTL
-cache.set("stable_query",   response, ttl=86400)    # 24-hour TTL
-cache.set("permanent",      response, ttl=0)        # Never expires
+cache.set("volatile_query", response, ttl=300)  # 5-minute TTL
+cache.set("stable_query", response, ttl=86400)  # 24-hour TTL
+cache.set("permanent", response, ttl=0)  # Never expires
 ```
 
 ### Cache Invalidation Patterns
@@ -618,12 +631,14 @@ if cached is None:
 ### HNSW Index for Large Caches (100K+ Entries)
 
 ```python
-cache = LongCache(CacheConfig(
-    faiss_index_type="hnsw",
-    hnsw_m=32,           # More connections → more accurate, more memory
-    hnsw_ef_search=64,   # Higher → more accurate, slower
-    max_entries=500_000,
-))
+cache = LongCache(
+    CacheConfig(
+        faiss_index_type="hnsw",
+        hnsw_m=32,  # More connections → more accurate, more memory
+        hnsw_ef_search=64,  # Higher → more accurate, slower
+        max_entries=500_000,
+    )
+)
 ```
 
 ### Inspecting the Cache

@@ -41,10 +41,12 @@ from longcache import LongCache
 
 cache = LongCache()
 
+
 @cache.cached
 def my_rag_pipeline(query: str) -> str:
     # Expensive retrieval + frontier model invocation
     return expensive_rag_call(query)
+
 
 # Call 1: Cache MISS; calls the pipeline
 ans1 = my_rag_pipeline("What is your refund policy?")

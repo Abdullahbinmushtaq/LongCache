@@ -22,9 +22,7 @@ from longcache import LongCache
 from longcache.integrations.openai import CachedOpenAI
 
 client = CachedOpenAI(
-    OpenAI(api_key="your-openai-api-key"),
-    cache=LongCache(),
-    namespace="production_chat"
+    OpenAI(api_key="your-openai-api-key"), cache=LongCache(), namespace="production_chat"
 )
 
 # First request — executes remote OpenAI API call
@@ -32,9 +30,9 @@ completion1 = client.chat.completions.create(
     model="gpt-4o",
     messages=[
         {"role": "system", "content": "You are a concise customer support assistant."},
-        {"role": "user", "content": "What is the return policy for international orders?"}
+        {"role": "user", "content": "What is the return policy for international orders?"},
     ],
-    temperature=0.0
+    temperature=0.0,
 )
 print(completion1.choices[0].message.content)
 
@@ -43,9 +41,9 @@ completion2 = client.chat.completions.create(
     model="gpt-4o",
     messages=[
         {"role": "system", "content": "You are a concise customer support assistant."},
-        {"role": "user", "content": "Can I return an item if I ordered from outside the country?"}
+        {"role": "user", "content": "Can I return an item if I ordered from outside the country?"},
     ],
-    temperature=0.0
+    temperature=0.0,
 )
 print(completion2.choices[0].message.content)
 ```

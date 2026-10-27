@@ -24,34 +24,36 @@ from longcache.integrations.langgraph import CachedState
 
 cache = LongCache()
 
+
 class AgentState(TypedDict):
     messages: list[dict]
     response: str
     cache_hit: bool
 
+
 def cache_node(state: AgentState) -> dict:
     # Check cache based on the latest user message
     cache_result = CachedState.check(state, cache, query_key="messages", namespace="agent_faq")
     if cache_result.get("hit"):
-        return {
-            "response": cache_result["response"],
-            "cache_hit": True
-        }
+        return {"response": cache_result["response"], "cache_hit": True}
     return {"cache_hit": False}
+
 
 def route_after_cache(state: AgentState):
     if state.get("cache_hit"):
         return END
     return "agent_reasoning"
 
+
 def agent_reasoning_node(state: AgentState) -> dict:
     query = state["messages"][-1]["content"]
     # Execute LLM tools / agent reasoning loop
     answer = call_expensive_agent(query)
-    
+
     # Store answer into cache for future runs
     cache.set(query, answer, namespace="agent_faq")
     return {"response": answer, "cache_hit": False}
+
 
 # Build graph
 workflow = StateGraph(AgentState)

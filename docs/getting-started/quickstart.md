@@ -12,11 +12,13 @@ from longcache import LongCache
 # Default configuration uses local SQLite persistence at .longcache/cache.db
 cache = LongCache()
 
+
 @cache.cached
 def ask_assistant(question: str) -> str:
     print("--> Calling expensive LLM API...")
     # Your real LLM or LangChain chain call here
     return f"Response to: {question}"
+
 
 # 1. First execution — Cache MISS
 print(ask_assistant("How can I update my billing email address?"))
@@ -40,15 +42,18 @@ from longcache import LongCache
 
 cache = LongCache()
 
+
 @cache.cached(namespace="support", ttl=3600)
 async def ask_async(question: str) -> str:
     await asyncio.sleep(1.0)  # Simulate network API latency
     return f"Processed: {question}"
 
+
 async def main():
     res1 = await ask_async("What is the return policy?")
     res2 = await ask_async("Can I get a refund on an item?")  # Cache hit!
     print(res2)
+
 
 asyncio.run(main())
 ```
@@ -85,12 +90,12 @@ You can customize the similarity threshold, backend, TTL, and namespace using `C
 from longcache import LongCache, CacheConfig
 
 config = CacheConfig(
-    similarity_threshold=0.92,   # Cosine similarity cutoff (0.0 to 1.0)
-    ttl_seconds=86400,            # 24 hour TTL
-    max_entries=50000,           # Max entries before LRU eviction
-    namespace="customer_support", # Isolated namespace
-    backend="sqlite",            # "sqlite", "redis", or "memory"
-    db_path="data/support_cache.db"
+    similarity_threshold=0.92,  # Cosine similarity cutoff (0.0 to 1.0)
+    ttl_seconds=86400,  # 24 hour TTL
+    max_entries=50000,  # Max entries before LRU eviction
+    namespace="customer_support",  # Isolated namespace
+    backend="sqlite",  # "sqlite", "redis", or "memory"
+    db_path="data/support_cache.db",
 )
 
 cache = LongCache(config)

@@ -22,10 +22,7 @@ from longcache.middleware import LongCacheMiddleware
 app = FastAPI(title="LLM Gateway API")
 
 # Initialize cache (SQLite or Redis)
-cache = LongCache(CacheConfig(
-    similarity_threshold=0.92,
-    namespace="api_gateway"
-))
+cache = LongCache(CacheConfig(similarity_threshold=0.92, namespace="api_gateway"))
 
 # Add middleware
 app.add_middleware(
@@ -34,15 +31,14 @@ app.add_middleware(
     cached_routes={"/v1/chat/completions", "/api/chat"},  # Target endpoints
 )
 
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
     # Your upstream LLM call here (e.g. LiteLLM, vLLM, OpenAI, Ollama)
     return {
         "id": "chatcmpl-123",
-        "choices": [
-            {"message": {"role": "assistant", "content": "Hello from upstream model!"}}
-        ]
+        "choices": [{"message": {"role": "assistant", "content": "Hello from upstream model!"}}],
     }
 ```
 

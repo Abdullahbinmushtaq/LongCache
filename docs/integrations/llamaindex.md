@@ -27,11 +27,7 @@ index = VectorStoreIndex.from_documents(documents)
 raw_engine = index.as_query_engine()
 
 # 2. Wrap with LongCache
-cached_engine = CachedQueryEngine(
-    query_engine=raw_engine,
-    cache=LongCache(),
-    namespace="kb_docs"
-)
+cached_engine = CachedQueryEngine(query_engine=raw_engine, cache=LongCache(), namespace="kb_docs")
 
 # Call 1: Misses cache, searches index, synthesizes response with LLM
 res1 = cached_engine.query("What is the warranty period for hardware?")
