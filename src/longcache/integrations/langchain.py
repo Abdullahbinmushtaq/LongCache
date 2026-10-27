@@ -1,8 +1,6 @@
-"""
-LangChain integration for LongCache.
+"""Compatibility adapter: opaque langchain state bypasses cache access in v0.2.
 
-Provides CachedLLM and CachedChain wrappers that add compatibility delegation for existing callers.
-Opaque framework execution bypasses caching in v0.2.
+Use explicit RequestContext with the manual interface for a proven workflow.
 """
 
 from __future__ import annotations
@@ -13,22 +11,9 @@ from longcache import LongCache, CacheConfig
 
 
 class CachedLLM:
-    """
-    Wraps any LangChain LLM/ChatModel with semantic caching.
+    """Compatibility adapter; opaque framework state bypasses caching in v0.2."""
 
-    Drop-in replacement that preserves the full LLM interface.
-    Cache is checked before the LLM is called, and new responses
-    are cached automatically.
-
-    Usage:
-        from langchain_openai import ChatOpenAI
-        from longcache.integrations.langchain import CachedLLM
-
-        llm = CachedLLM(ChatOpenAI(model="gpt-4o"), cache=LongCache())
-        response = llm.invoke("What is the refund policy?")  # same API
-        # Second call with similar query returns cached response instantly
-        response2 = llm.invoke("How do I get a refund?")  # cache HIT
-    """
+    cache_bypass_reason = "unsupported_request_shape"
 
     def __init__(
         self,
@@ -93,48 +78,23 @@ class CachedLLM:
         return str(input)
 
     def invoke(self, input: Any, *args, **kwargs) -> Any:
-        """
-        Invoke the LLM with caching.
-
-        Checks the cache first. On a HIT, returns the cached response.
-        On a MISS, calls the LLM and caches the result.
-
-        Args:
-            input: The LLM input (string, messages list, or dict).
-            *args: Additional positional arguments passed to the LLM.
-            **kwargs: Additional keyword arguments passed to the LLM.
-
-        Returns:
-            The LLM response (from cache or fresh invocation).
-        """
+        """Delegate unchanged; unproven execution identity is never cached."""
 
         result = self.llm.invoke(input, *args, **kwargs)
         return result
 
     async def ainvoke(self, input: Any, *args, **kwargs) -> Any:
-        """
-        Async invoke the LLM with caching.
-
-        Same as invoke() but uses the async LLM interface.
-
-        Args:
-            input: The LLM input.
-            *args: Additional positional arguments.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            The LLM response (from cache or fresh invocation).
-        """
+        """Delegate unchanged; unproven execution identity is never cached."""
 
         result = await self.llm.ainvoke(input, *args, **kwargs)
         return result
 
     def stream(self, input: Any, *args, **kwargs):
-        """Forward unsupported streaming requests without cache access."""
+        """Delegate unchanged; unproven execution identity is never cached."""
         yield from self.llm.stream(input, *args, **kwargs)
 
     async def astream(self, input: Any, *args, **kwargs):
-        """Forward unsupported streaming requests without cache access."""
+        """Delegate unchanged; unproven execution identity is never cached."""
         async for chunk in self.llm.astream(input, *args, **kwargs):
             yield chunk
 
@@ -147,20 +107,9 @@ class CachedLLM:
 
 
 class CachedChain:
-    """
-    Wraps any LCEL Runnable chain with semantic caching.
+    """Compatibility adapter; opaque framework state bypasses caching in v0.2."""
 
-    Cache key is the final user query string extracted from the chain input.
-    Works with any LCEL chain: prompt | llm | parser, RetrievalQA, etc.
-
-    Usage:
-        from langchain_openai import ChatOpenAI
-        from longcache.integrations.langchain import CachedChain
-
-        chain = prompt | ChatOpenAI() | StrOutputParser()
-        cached_chain = CachedChain(chain, cache=LongCache())
-        result = cached_chain.invoke({"question": "What is RAG?"})
-    """
+    cache_bypass_reason = "unsupported_request_shape"
 
     def __init__(
         self,
@@ -200,33 +149,13 @@ class CachedChain:
         return str(input)
 
     def invoke(self, input: Any, *args, **kwargs) -> Any:
-        """
-        Invoke the chain with caching.
-
-        Args:
-            input: Chain input (typically a dict with the query key).
-            *args: Additional positional arguments.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            The chain output (from cache or fresh invocation).
-        """
+        """Delegate unchanged; unproven execution identity is never cached."""
 
         result = self.chain.invoke(input, *args, **kwargs)
         return result
 
     async def ainvoke(self, input: Any, *args, **kwargs) -> Any:
-        """
-        Async invoke the chain with caching.
-
-        Args:
-            input: Chain input.
-            *args: Additional positional arguments.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            The chain output (from cache or fresh invocation).
-        """
+        """Delegate unchanged; unproven execution identity is never cached."""
 
         result = await self.chain.ainvoke(input, *args, **kwargs)
         return result

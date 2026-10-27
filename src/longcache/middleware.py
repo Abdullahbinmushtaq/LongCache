@@ -37,7 +37,9 @@ class LongCacheMiddleware:
         self.excluded = set(exclude_namespaces or ())
         self.context = context
         if scope_resolver is not None and (
-            not callable(scope_resolver) or inspect.iscoroutinefunction(scope_resolver)
+            not callable(scope_resolver)
+            or inspect.iscoroutinefunction(scope_resolver)
+            or inspect.iscoroutinefunction(getattr(scope_resolver, "__call__", None))
         ):
             raise ValueError("Scope resolver must be a synchronous callable")
         self.scope_resolver = scope_resolver
@@ -86,6 +88,8 @@ class LongCacheMiddleware:
         if self.scope_resolver is not None and base is not None:
             try:
                 resolved = self.scope_resolver(scope)
+                if inspect.iscoroutine(resolved):
+                    resolved.close()
                 base = replace(base, scope=resolved) if isinstance(resolved, RequestScope) else None
             except Exception:
                 base = None
@@ -184,6 +188,8 @@ class LongCacheMiddleware:
 
 class StreamingCacheAdapter:
     """Compatibility pass-through; streaming cache replay is unsupported in v0.2."""
+
+    cache_bypass_reason = "unsupported_request_shape"
 
     def __init__(self, cache, stream_func, namespace="streaming", replay_delay=0, **kwargs):
         self.cache = cache

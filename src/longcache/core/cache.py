@@ -106,6 +106,8 @@ class LongCache:
                 self._ready = True
                 return
             descriptor = self._embedding.descriptor
+            if self._ready:
+                return
             self.backend.ensure_manifest(
                 {
                     "format": 2,
