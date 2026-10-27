@@ -53,7 +53,7 @@ Legacy model/prompt/temperature fields are insufficient to establish trusted req
 
 `PolicyDecision(action, reason)` has action `accept`, `reject`, or `abstain`. Admission receives `(context, normalized_response)`; verification receives `(query, candidate_query, normalized_response, similarity, context)`. Hook exceptions/invalid return values reject reuse or storage. Mandatory checks cannot be overridden.
 
-`BaseEmbedder` requires `dimension`, `embed(text)`, and a stable `EmbeddingDescriptor(model, revision, dimension, preprocessing, normalization)`. The default batch implementation supports empty batches. Calls are serialized per embedder; malformed or incompatible vectors are rejected.
+`BaseEmbedder` requires `dimension`, `embed(text)`, and a stable `EmbeddingDescriptor(model, revision, dimension, preprocessing, normalization)`. Single vectors and batches must be contiguous float32 arrays with finite, L2-normalized rows and the declared dimension. Empty batches must have shape `(0, dimension)` and float32 dtype; they do not bypass dtype validation. The default batch implementation supports empty batches. Calls are serialized per embedder; malformed or incompatible vectors are rejected.
 
 See [architecture](how-it-works/architecture.md), [migration](migration-v0.2.md), and the [support matrix](index.md#supported-integrations) for limits.
 

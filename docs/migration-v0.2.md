@@ -21,4 +21,6 @@
 
 A generation has one explicit model/revision/dimension/preprocessing/normalization descriptor. A same-size different model remains incompatible. Use a new store generation when it changes; automatic re-embedding is not part of v0.2.
 
+SQLite initialization rolls back incomplete schema creation, including process termination before commit. Incompatible partial schemas and missing manifests in populated SQLite/Redis stores are refused. Use a fresh path/generation; do not fabricate a manifest for existing entries. Recovery tests include an actual v0.1.1 backup-and-restore round-trip. See the [acceptance evidence](plans/v0.2.0-acceptance.md).
+
 Legacy SQLite opening fails before modifying old data. Raw copies of a live SQLite WAL file are not a complete backup method. No upgrade step automatically deletes the old store.

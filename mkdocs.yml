@@ -79,6 +79,7 @@ nav:
     - LlamaIndex: integrations/llamaindex.md
     - OpenAI: integrations/openai.md
     - FastAPI: integrations/fastapi.md
+    - Changing-document RAG: integrations/versioned-rag.md
   - CLI Reference: cli.md
   - API Reference: api-reference.md
   - Migration to v0.2: migration-v0.2.md

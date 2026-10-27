@@ -1,10 +1,12 @@
 # LongCache
 
-Semantic response reuse for Python LLM and RAG applications. **v0.2.0 beta requires Python 3.11 or 3.12.**
+Semantic response reuse for Python LLM and RAG applications. **v0.2.0 is unreleased; Python 3.11 and 3.12 are the tested interpreters.**
 
 LongCache finds similar requests with local embeddings and FAISS, then checks whether their execution context and reuse policy permit the same answer. Similarity alone does not establish correctness. Measure false hits and useful reuse on your own workload.
 
 ## Install
+
+v0.2.0 is currently a development checkout. Package-index commands install the available published release. See [installation](getting-started/installation.md) for installing and validating this branch.
 
 ```bash
 uv pip install longcache
@@ -121,7 +123,7 @@ Use `AsyncOpenAI` and await the same `create` method for an async client. Supply
 
 Configure `LongCacheMiddleware(..., context=context_template, scope_resolver=resolve_scope)` after trusted authentication has populated the ASGI scope. The synchronous resolver returns `RequestScope` from that authenticated principal. Requests with Authorization, Cookie, or X-API-Key headers bypass when no trusted resolver is configured.
 
-The middleware bounds request and response capture to 1 MiB by default. Unsupported streaming and oversized requests pass through. It preserves upstream bodies/statuses, rejects incomplete/non-success capture, and avoids storing responses with cookies, `Vary`, or private/no-store cache controls. Headers expose `X-LongCache`, `X-LongCache-Reason`, and same-scope `X-LongCache-Similarity` when applicable. A response-start header cannot report admission that happens after the response body finishes.
+The middleware bounds request and response capture to 1 MiB by default. Unsupported streaming and oversized requests pass through. It preserves upstream bodies/statuses and stores only complete eligible status-200 `application/json` responses. Cookies, `Vary`, private/no-store directives in any repeated Cache-Control header, and observed disconnects prevent admission. Headers expose `X-LongCache`, `X-LongCache-Reason`, and same-scope `X-LongCache-Similarity` when applicable. A response-start header cannot report admission that happens after the response body finishes.
 
 ## Storage and custom embeddings
 
@@ -163,14 +165,17 @@ Operator mode is explicit local access to the owned v0.2 store, not an authentic
 ```bash
 uv sync --locked --extra all --extra dev --extra docs
 export LONGCACHE_TEST_REDIS_URL=redis://localhost:16379/0
-uv run --no-sync pytest -q -rs
+LONGCACHE_TEST_MODEL=1 uv run --no-sync pytest -q -rs
 uv run --no-sync ruff check .
 uv run --no-sync ruff format --check .
 uv run --no-sync mkdocs build --strict
 uv run --no-sync python -m evaluation.run --config evaluation/configs/v0_2_release.json
+uv run --no-sync python -m evaluation.rag
 ```
 
-The versioned synthetic evaluation includes safe paraphrases, near misses, isolation changes, unsupported shapes, and freshness cases. It reports incorrect hits, accepted-hit counts, useful coverage, bypasses, latency, and confidence bounds. Its expanded templates are correlated and do not establish correctness for unrelated real workloads. Scenario timing uses precomputed real-model vectors; model inference and end-to-end performance are separate measurements. See the evaluation reports and detailed implementation plan in [the implementation plan](plans/v0.2.0.md).
+The versioned synthetic evaluation includes safe paraphrases, near misses, isolation changes, unsupported shapes, and freshness cases. It reports incorrect hits, accepted-hit counts, useful coverage, bypasses, latency, and confidence bounds. Its expanded templates are correlated and do not establish correctness for unrelated real workloads. Scenario timing uses precomputed real-model vectors; model inference and end-to-end performance are separate measurements. See [evaluation and benchmarks](benchmarks.md) for reproducible commands and [acceptance evidence](plans/v0.2.0-acceptance.md) for the test matrix.
+
+The recorded local validation passed 372 tests with zero skips on each of Python 3.11 and 3.12, all six backend/index combinations for changing-document RAG, and all four paired latency gates. Hosted CI after manual push, customer-domain review, and release-candidate feedback remain external release gates. See the [execution record](plans/v0.2.0-execution.md).
 
 ## License
 
