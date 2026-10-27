@@ -166,6 +166,10 @@ class LongCache:
             or ctx.request_shape != "single-turn-text"
         ):
             return None, "unsupported_request_shape"
+        try:
+            query.encode("utf-8")
+        except UnicodeError:
+            return None, "unsupported_request_shape"
         if ctx.codec not in ("json-v1", "openai-dict-v1", "openai-sdk-v1"):
             return None, "unsupported_request_shape"
         if type(namespace or self.config.namespace) is not str:

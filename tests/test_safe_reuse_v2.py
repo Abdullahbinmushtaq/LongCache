@@ -237,3 +237,31 @@ def test_malformed_persisted_payload_becomes_miss(invalid):
         result = cache.lookup("q", context=context())
         assert result.outcome == "MISS"
         assert result.reason == "codec_invalid"
+
+
+def test_verification_budget_exhaustion_is_not_a_hit():
+    with LongCache(
+        CacheConfig(backend="memory", verification_budget=2), embedder=TinyEmbedder()
+    ) as cache:
+        for days in (30, 40, 50):
+            cache.set(f"return in {days} days", "answer", context=context())
+        result = cache.lookup("return in 60 days", context=context())
+        assert result.outcome == "MISS"
+        assert result.reason == "verification_budget_exhausted"
+        assert cache.stats(context=context())["hits"] == 0
+
+
+def test_admission_hook_failure_rejects_storage():
+    def broken(*args):
+        raise RuntimeError("private provider metadata")
+
+    with LongCache(CacheConfig(backend="memory"), embedder=TinyEmbedder(), admit=broken) as cache:
+        decision = cache.set("q", "complete answer", context=context())
+        assert decision.outcome == "REJECTED"
+        assert decision.reason == "hook_failed"
+        assert not cache.entries(operator=True)
+
+
+def test_invalid_unicode_never_reaches_embedding_or_storage(cache):
+    assert cache.lookup("bad\ud800", context=context()).outcome == "BYPASS"
+    assert cache.set("q", "bad\ud800", context=context()).outcome == "REJECTED"

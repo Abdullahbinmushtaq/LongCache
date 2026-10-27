@@ -24,7 +24,9 @@ def strict_json(value):
         raise ValueError("Unsupported JSON response type")
 
     check(value)
-    return json.loads(json.dumps(value, allow_nan=False, ensure_ascii=False))
+    encoded = json.dumps(value, allow_nan=False, ensure_ascii=False)
+    encoded.encode("utf-8")
+    return json.loads(encoded)
 
 
 def encode_response(response, codec):

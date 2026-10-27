@@ -41,6 +41,13 @@ def prepare_request(kwargs, base, codec):
         or not last["content"]
     ):
         return None, "unsupported_request_shape"
+    try:
+        model.encode("utf-8")
+        last["content"].encode("utf-8")
+        for instruction in instructions:
+            instruction.content.encode("utf-8")
+    except UnicodeError:
+        return None, "unsupported_request_shape"
     generation = {}
     if "temperature" in kwargs:
         temp = kwargs["temperature"]

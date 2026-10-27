@@ -198,3 +198,16 @@ def test_opaque_frameworks_do_not_access_cache(module, cls, method):
     assert getattr(wrapper, method)("q") == "answer"
     assert getattr(wrapper, method)("q") == "answer"
     assert getattr(upstream, method).call_count == 2
+
+
+def test_openai_invalid_unicode_passes_through_without_cache():
+    call = Mock(return_value=completion())
+    with LongCache(CacheConfig(backend="memory"), embedder=TinyEmbedder()) as cache:
+        cache.lookup = Mock(side_effect=AssertionError("invalid Unicode was looked up"))
+        wrapped = CachedOpenAI(
+            SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=call))),
+            cache=cache,
+            context=context(),
+        )
+        wrapped.chat.create(model="m", messages=[{"role": "user", "content": "bad\ud800"}])
+        assert call.call_count == 1
