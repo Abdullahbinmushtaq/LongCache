@@ -7,7 +7,6 @@ to any LangChain LLM or LCEL chain with zero code changes.
 
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 
 from longcache import LongCache, CacheConfig
@@ -108,13 +107,8 @@ class CachedLLM:
         Returns:
             The LLM response (from cache or fresh invocation).
         """
-        query_key = self._extract_query(input)
-        cached = self.cache.get(query_key, namespace=self._namespace)
-        if cached is not None:
-            return cached
 
         result = self.llm.invoke(input, *args, **kwargs)
-        self.cache.set(query_key, result, namespace=self._namespace)
         return result
 
     async def ainvoke(self, input: Any, *args, **kwargs) -> Any:
@@ -131,78 +125,18 @@ class CachedLLM:
         Returns:
             The LLM response (from cache or fresh invocation).
         """
-        query_key = self._extract_query(input)
-        cached = await self.cache.aget(query_key, namespace=self._namespace)
-        if cached is not None:
-            return cached
 
         result = await self.llm.ainvoke(input, *args, **kwargs)
-        await self.cache.aset(query_key, result, namespace=self._namespace)
         return result
 
     def stream(self, input: Any, *args, **kwargs):
-        """
-        Stream the LLM response with caching.
-
-        On a cache HIT, replays the cached response token-by-token.
-        On a MISS, streams from the LLM, collects the response, and caches it.
-
-        Args:
-            input: The LLM input.
-            *args: Additional positional arguments.
-            **kwargs: Additional keyword arguments.
-
-        Yields:
-            Response chunks (from cache replay or live LLM stream).
-        """
-        query_key = self._extract_query(input)
-        cached = self.cache.get(query_key, namespace=self._namespace)
-
-        if cached is not None:
-            # Replay cached response preserving original whitespace
-            cached_str = str(cached)
-            tokens = re.findall(r"\S+\s*", cached_str)
-            for token in tokens:
-                yield token
-            return
-
-        # Stream from LLM and collect
-        collected_chunks = []
-        for chunk in self.llm.stream(input, *args, **kwargs):
-            collected_chunks.append(chunk)
-            yield chunk
-
-        # Cache the assembled response
-        self.cache.set(query_key, collected_chunks, namespace=self._namespace)
+        """Forward unsupported streaming requests without cache access."""
+        yield from self.llm.stream(input, *args, **kwargs)
 
     async def astream(self, input: Any, *args, **kwargs):
-        """
-        Async stream the LLM response with caching.
-
-        Args:
-            input: The LLM input.
-            *args: Additional positional arguments.
-            **kwargs: Additional keyword arguments.
-
-        Yields:
-            Response chunks.
-        """
-        query_key = self._extract_query(input)
-        cached = await self.cache.aget(query_key, namespace=self._namespace)
-
-        if cached is not None:
-            cached_str = str(cached)
-            tokens = re.findall(r"\S+\s*", cached_str)
-            for token in tokens:
-                yield token
-            return
-
-        collected_chunks = []
+        """Forward unsupported streaming requests without cache access."""
         async for chunk in self.llm.astream(input, *args, **kwargs):
-            collected_chunks.append(chunk)
             yield chunk
-
-        await self.cache.aset(query_key, collected_chunks, namespace=self._namespace)
 
     def __getattr__(self, name: str) -> Any:
         """Proxy all other attributes to the underlying LLM."""
@@ -277,13 +211,8 @@ class CachedChain:
         Returns:
             The chain output (from cache or fresh invocation).
         """
-        query = self._extract_query(input)
-        cached = self.cache.get(query, namespace=self._namespace)
-        if cached is not None:
-            return cached
 
         result = self.chain.invoke(input, *args, **kwargs)
-        self.cache.set(query, result, namespace=self._namespace)
         return result
 
     async def ainvoke(self, input: Any, *args, **kwargs) -> Any:
@@ -298,13 +227,8 @@ class CachedChain:
         Returns:
             The chain output (from cache or fresh invocation).
         """
-        query = self._extract_query(input)
-        cached = await self.cache.aget(query, namespace=self._namespace)
-        if cached is not None:
-            return cached
 
         result = await self.chain.ainvoke(input, *args, **kwargs)
-        await self.cache.aset(query, result, namespace=self._namespace)
         return result
 
     def __getattr__(self, name: str) -> Any:

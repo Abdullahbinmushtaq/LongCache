@@ -73,10 +73,6 @@ class CachedState:
         if not query:
             return {"__cache_hit": False}
 
-        cached = cache.get(query, namespace=namespace)
-        if cached is not None:
-            return {"__cache_hit": True, "cached_response": cached}
-
         return {"__cache_hit": False, "cached_query": query}
 
     @staticmethod
@@ -110,10 +106,6 @@ class CachedState:
         if not query:
             return {"__cache_hit": False}
 
-        cached = await cache.aget(query, namespace=namespace)
-        if cached is not None:
-            return {"__cache_hit": True, "cached_response": cached}
-
         return {"__cache_hit": False, "cached_query": query}
 
     @staticmethod
@@ -132,9 +124,8 @@ class CachedState:
             cache: LongCache instance.
             namespace: The cache namespace.
         """
-        query = state.get("cached_query")
-        if query:
-            cache.set(query, response, namespace=namespace)
+        # Opaque graph state has no complete identity/replay contract in v0.2.
+        return None
 
     @staticmethod
     async def asave(
@@ -144,6 +135,4 @@ class CachedState:
         namespace: str = "langgraph",
     ) -> None:
         """Async version of save()."""
-        query = state.get("cached_query")
-        if query:
-            await cache.aset(query, response, namespace=namespace)
+        return None

@@ -68,12 +68,8 @@ class CachedQueryEngine:
         Returns:
             The query response (from cache or fresh invocation).
         """
-        cached = self.cache.get(query_str, namespace=self._namespace)
-        if cached is not None:
-            return cached
 
         result = self.query_engine.query(query_str, **kwargs)
-        self.cache.set(query_str, result, namespace=self._namespace)
         return result
 
     async def aquery(self, query_str: str, **kwargs) -> Any:
@@ -87,12 +83,8 @@ class CachedQueryEngine:
         Returns:
             The query response (from cache or fresh invocation).
         """
-        cached = self.cache.get(query_str, namespace=self._namespace)
-        if cached is not None:
-            return cached
 
         result = await self.query_engine.aquery(query_str, **kwargs)
-        self.cache.set(query_str, result, namespace=self._namespace)
         return result
 
     def __getattr__(self, name: str) -> Any:
