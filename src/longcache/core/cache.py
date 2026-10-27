@@ -161,7 +161,7 @@ class LongCache:
             return None, "missing_identity"
         if (
             type(query) is not str
-            or not query
+            or not query.strip()
             or len(query) > self.config.max_query_chars
             or ctx.request_shape != "single-turn-text"
         ):

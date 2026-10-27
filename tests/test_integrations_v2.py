@@ -53,6 +53,8 @@ async def test_openai_scoped_replay_and_context_changes(async_mode):
     "extra",
     [
         {"stream": True},
+        {"model": " "},
+        {"messages": [{"role": "user", "content": " "}]},
         {"tools": []},
         {"top_p": 0.5},
         {"response_format": {"type": "json_object"}},

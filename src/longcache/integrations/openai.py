@@ -17,7 +17,7 @@ def prepare_request(kwargs, base, codec):
     model, messages = kwargs.get("model"), kwargs.get("messages")
     if (
         type(model) is not str
-        or not model
+        or not model.strip()
         or type(messages) is not list
         or not 1 <= len(messages) <= 3
     ):
@@ -38,7 +38,7 @@ def prepare_request(kwargs, base, codec):
         or set(last) != {"role", "content"}
         or last["role"] != "user"
         or type(last["content"]) is not str
-        or not last["content"]
+        or not last["content"].strip()
     ):
         return None, "unsupported_request_shape"
     try:
