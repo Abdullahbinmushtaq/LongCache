@@ -124,6 +124,7 @@ jobs:
       - name: Verify clean wheel install and CLI
         run: |
           uv venv /tmp/wheel-check --python 3.12
+          uv pip install --python /tmp/wheel-check/bin/python "torch==2.14.0+cpu" --index-url https://download.pytorch.org/whl/cpu
           uv pip install --python /tmp/wheel-check/bin/python dist/*.whl
           /tmp/wheel-check/bin/python -c "import longcache; assert longcache.__version__ == '0.2.0'"
           /tmp/wheel-check/bin/longcache --version
