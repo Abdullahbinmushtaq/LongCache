@@ -81,6 +81,8 @@ class RedisCacheBackend(AbstractCacheBackend):
 
         encoded = canonical(manifest)
         key = self.ROOT + ":manifest"
+        if self._client.get(key) is None and self.list_all_entries():
+            raise ValueError("Missing storage manifest in nonempty cache; use a new generation")
         self._client.set(key, encoded, nx=True)
         if self._client.get(key) != encoded:
             raise ValueError("Incompatible embedding or storage generation; use a new generation")

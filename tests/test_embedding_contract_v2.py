@@ -49,3 +49,18 @@ def test_revision_drift_rejected_at_same_dimension():
     embedder.revision = "fixture-v2"
     with pytest.raises(ValueError, match="generation changed"):
         guard.embed("q")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        np.empty((0, 2), dtype=np.float64),
+        np.array([[np.inf, 0]], dtype=np.float32),
+        np.array([[1, 0], [0, 1]], dtype=np.float32)[:, ::-1],
+    ],
+)
+def test_invalid_batch_contract_rejected(bad):
+    embedder = TinyEmbedder()
+    embedder.embed_batch = lambda texts: bad
+    with pytest.raises(ValueError):
+        EmbeddingGuard(embedder).batch([] if len(bad) == 0 else ["q"] * len(bad))

@@ -74,7 +74,12 @@ class EmbeddingGuard:
         with self.lock:
             dimension = self.descriptor.dimension
             vectors = self.embedder.embed_batch(texts)
-            if not isinstance(vectors, np.ndarray) or vectors.shape != (len(texts), dimension):
+            if (
+                not isinstance(vectors, np.ndarray)
+                or vectors.shape != (len(texts), dimension)
+                or vectors.dtype != np.float32
+                or not vectors.flags.c_contiguous
+            ):
                 raise ValueError("Invalid embedding batch shape")
             for vector in vectors:
                 validate_vector(vector, dimension)

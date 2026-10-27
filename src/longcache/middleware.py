@@ -70,7 +70,16 @@ class LongCacheMiddleware:
             body.extend(chunk)
             if not message.get("more_body", False):
                 break
-        replay = self._replay(frames, receive)
+        original_replay = self._replay(frames, receive)
+        disconnected = False
+
+        async def replay():
+            nonlocal disconnected
+            message = await original_replay()
+            if message["type"] == "http.disconnect":
+                disconnected = True
+            return message
+
         data = None
         reason = "unsupported_request_shape"
         if not oversized:
@@ -124,15 +133,19 @@ class LongCacheMiddleware:
         async def capture(message):
             nonlocal size, complete, safe
             if message["type"] == "http.response.start":
-                response_headers = {k.lower(): v.lower() for k, v in message.get("headers", [])}
-                control = response_headers.get(b"cache-control", b"")
+                response_headers = [(k.lower(), v.lower()) for k, v in message.get("headers", [])]
+                names = {k for k, _ in response_headers}
+                control = b",".join(v for k, v in response_headers if k == b"cache-control")
+                media = [
+                    v.split(b";", 1)[0].strip() for k, v in response_headers if k == b"content-type"
+                ]
                 safe = (
                     message.get("status") == 200
-                    and b"set-cookie" not in response_headers
-                    and b"vary" not in response_headers
+                    and b"set-cookie" not in names
+                    and b"vary" not in names
                     and b"no-store" not in control
                     and b"private" not in control
-                    and response_headers.get(b"content-type", b"").startswith(b"application/json")
+                    and media == [b"application/json"]
                 )
             elif message["type"] == "http.response.body":
                 chunk = message.get("body", b"")
@@ -146,7 +159,7 @@ class LongCacheMiddleware:
             await decorated(message)
 
         await self.app(scope, replay, capture)
-        if safe and complete and decision.outcome != "BYPASS":
+        if safe and complete and not disconnected and decision.outcome != "BYPASS":
             try:
                 response = json.loads(b"".join(parts), object_pairs_hook=_object)
             except (ValueError, UnicodeDecodeError):
