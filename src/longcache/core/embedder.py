@@ -31,7 +31,7 @@ class LocalEmbedder(BaseEmbedder):
     """
 
     # Class-level cache for model instances (singleton per model name)
-    _instances: dict[str, LocalEmbedder] = {}
+    _instances: dict[tuple[str, str], LocalEmbedder] = {}
     _lock = threading.Lock()
 
     def __new__(cls, model_name: str = "BAAI/bge-small-en-v1.5", revision: str = ""):
@@ -108,7 +108,11 @@ class LocalEmbedder(BaseEmbedder):
             self._model = SentenceTransformer(
                 self._model_name, **({"revision": self._revision} if self._revision else {})
             )
-            self._dimension = self._model.get_sentence_embedding_dimension()
+            get_dimension = (
+                getattr(self._model, "get_embedding_dimension", None)
+                or self._model.get_sentence_embedding_dimension
+            )
+            self._dimension = get_dimension()
             _log.info("Embedding model loaded: dim=%d", self._dimension)
 
     @property

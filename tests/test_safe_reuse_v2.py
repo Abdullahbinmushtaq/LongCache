@@ -227,3 +227,13 @@ def test_application_verifier_failure_cannot_count_as_hit():
         assert decision.reason == "hook_failed"
         assert "secret" not in repr(decision)
         assert cache.stats(context=context())["hits"] == 0
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), object()])
+def test_malformed_persisted_payload_becomes_miss(invalid):
+    with LongCache(CacheConfig(backend="memory"), embedder=TinyEmbedder()) as cache:
+        stored = cache.set("q", "approved", context=context())
+        cache.backend.retrieve(stored.entry_id).response = invalid
+        result = cache.lookup("q", context=context())
+        assert result.outcome == "MISS"
+        assert result.reason == "codec_invalid"

@@ -211,15 +211,16 @@ class LongCache:
             )
         reason, last_score = "no_candidate", None
         for entry, score in candidates[: self.config.verification_budget]:
-            if entry.metadata != {
-                "format": 2,
-                "identity": identity,
-                "embedding": self._fingerprint,
-                "payload": digest(entry.response),
-            }:
+            expected = {"format": 2, "identity": identity, "embedding": self._fingerprint}
+            if not isinstance(entry.metadata, dict) or any(
+                entry.metadata.get(k) != v for k, v in expected.items()
+            ):
                 reason = "legacy_format"
                 continue
             try:
+                if entry.metadata.get("payload") != digest(entry.response):
+                    reason = "codec_invalid"
+                    continue
                 response = decode_response(entry.response, ctx.codec)
                 payload, admission = admit(response, ctx, self._admit)
                 if admission.action != "accept":
@@ -245,7 +246,11 @@ class LongCache:
                     reason = "expired_or_deleted"
                     continue
                 # The backend may be mutable: validate the final payload, not a stale snapshot.
-                if canonical(current.response) != canonical(entry.response):
+                try:
+                    if digest(current.response) != entry.metadata["payload"]:
+                        reason = "codec_invalid"
+                        continue
+                except (TypeError, ValueError):
                     reason = "codec_invalid"
                     continue
                 if _cancel is not None and _cancel.is_set():
@@ -476,6 +481,7 @@ class LongCache:
             return count
 
     def clear(self, *, operator=False):
+        self._ensure_open()
         if not operator:
             raise ValueError("Clearing all partitions requires explicit operator=True")
         with self._mutation_lock:
@@ -484,6 +490,7 @@ class LongCache:
             return count
 
     def entries(self, namespace=None, *, context=None, operator=False):
+        self._ensure_open()
         with self._mutation_lock:
             if operator:
                 return self.backend.list_all_entries()
@@ -491,6 +498,7 @@ class LongCache:
             return [] if reason else self.backend.list_entries(prepared[1])
 
     def stats(self, *, context=None, namespace=None, operator=False):
+        self._ensure_open()
         with self._mutation_lock:
             if operator:
                 counts = self._stats.copy()
