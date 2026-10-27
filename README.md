@@ -78,6 +78,7 @@ Built-in checks cover supported English negation, quantities/units, protected en
 
 ```python
 with LongCache(context=context) as cache:
+
     @cache.cached(ttl=600)
     def answer(query):
         return "An approved complete answer"
