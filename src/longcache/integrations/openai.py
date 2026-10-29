@@ -161,11 +161,13 @@ class CachedChatCompletions:
 
     def create(self, *, cache_context=None, **kwargs):
         parent = self._parent
-        prepared, _ = prepare_request(
+        prepared, reason = prepare_request(
             kwargs, cache_context if cache_context is not None else parent.context, parent.codec
         )
         if prepared is None:
-            return parent._client.chat.completions.create(**kwargs)
+            return parent.cache._pass_through(
+                lambda: parent._client.chat.completions.create(**kwargs), reason, "openai"
+            )
         query, ctx = prepared
         kwargs = snapshot_request(kwargs, query, ctx)
         return parent.cache.get_or_compute(
@@ -186,11 +188,11 @@ class CachedChatCompletions:
         )
         if not inspect.iscoroutinefunction(call):
             raise TypeError("An async OpenAI client is required")
-        prepared, _ = prepare_request(
+        prepared, reason = prepare_request(
             kwargs, cache_context if cache_context is not None else parent.context, parent.codec
         )
         if prepared is None:
-            return await call(**kwargs)
+            return await parent.cache._apass_through(lambda: call(**kwargs), reason, "openai")
         query, ctx = prepared
         kwargs = snapshot_request(kwargs, query, ctx)
         return await parent.cache.aget_or_compute(

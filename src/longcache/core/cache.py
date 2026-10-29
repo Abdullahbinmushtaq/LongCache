@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import asyncio
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import asdict, replace
 from functools import wraps
 import inspect
@@ -23,7 +23,7 @@ from .lifecycle import Lifecycle, managed
 from .errors import CacheClosedError
 from .errors import CacheOperationError
 from .observability import Observability
-from .reliability import dependency, decision_operation, operational
+from .reliability import dependency, decision_operation, operational, execution_operation
 from .execution import Execution
 from .policy import admit, decode_response, verify
 
@@ -54,7 +54,9 @@ class LongCache:
         self._admit, self._verifier = admit, verifier
         self._mutation_lock = threading.RLock()
         self._stats = Counter()
-        self._partition_stats = {}
+        self._partition_stats = OrderedDict()
+        self._stats_started_at = time.time()
+        self._stats_evictions = 0
         self._closed = False
         self._coherent = True
         self._epoch = 0
@@ -214,7 +216,13 @@ class LongCache:
     def _account(self, partition, outcome):
         if self.config.track_stats:
             self._stats[outcome] += 1
-            self._partition_stats.setdefault(partition, Counter())[outcome] += 1
+            if partition not in self._partition_stats:
+                if len(self._partition_stats) >= 1024:
+                    self._partition_stats.popitem(last=False)
+                    self._stats_evictions += 1
+                self._partition_stats[partition] = Counter(_started_at=time.time())
+            self._partition_stats.move_to_end(partition)
+            self._partition_stats[partition][outcome] += 1
 
     @managed
     @decision_operation("lookup")
@@ -278,10 +286,12 @@ class LongCache:
                 reason = "codec_invalid"
                 continue
             last_score = score
-            verification = verify(query, entry.query, payload, score, ctx, self._verifier)
+            verification = self._dependency(
+                "verification", verify, query, entry.query, payload, score, ctx, self._verifier
+            )
             self._observability.count(
                 "verification",
-                outcome="hit" if verification.action == "accept" else "rejected",
+                outcome=verification.action,
                 reason=verification.reason,
             )
             if verification.action != "accept":
@@ -412,10 +422,10 @@ class LongCache:
         if reason:
             return StoreDecision("REJECTED", reason)
         ctx, partition, identity = prepared
-        payload, decision = admit(response, ctx, self._admit)
+        payload, decision = self._dependency("admission", admit, response, ctx, self._admit)
         self._observability.count(
             "admission",
-            outcome="stored" if decision.action == "accept" else "rejected",
+            outcome=decision.action,
             reason=decision.reason,
         )
         if decision.action != "accept":
@@ -474,6 +484,7 @@ class LongCache:
     async def aset(self, query, response, namespace=None, **kwargs):
         return await self._async(self.set, query, response, namespace, **kwargs)
 
+    @execution_operation
     def get_or_compute(
         self,
         query,
@@ -496,6 +507,7 @@ class LongCache:
             _entry_point=_entry_point,
         )
 
+    @execution_operation
     async def aget_or_compute(
         self,
         query,
@@ -559,10 +571,14 @@ class LongCache:
                 @wraps(fn)
                 async def async_wrapper(query, *args, **kwargs):
                     if args or kwargs or legacy:
-                        return await fn(query, *args, **kwargs)
+                        return await self._apass_through(
+                            lambda: fn(query, *args, **kwargs), "unsupported_parameter", "decorator"
+                        )
                     ctx = resolve((query,), {})
                     if ctx is None:
-                        return await fn(query)
+                        return await self._apass_through(
+                            lambda: fn(query), "missing_identity", "decorator"
+                        )
                     return await self.aget_or_compute(
                         query,
                         lambda: fn(query),
@@ -579,10 +595,12 @@ class LongCache:
             @wraps(fn)
             def wrapper(query, *args, **kwargs):
                 if args or kwargs or legacy:
-                    return fn(query, *args, **kwargs)
+                    return self._pass_through(
+                        lambda: fn(query, *args, **kwargs), "unsupported_parameter", "decorator"
+                    )
                 ctx = resolve((query,), {})
                 if ctx is None:
-                    return fn(query)
+                    return self._pass_through(lambda: fn(query), "missing_identity", "decorator")
                 return self.get_or_compute(
                     query,
                     lambda: fn(query),
@@ -598,12 +616,46 @@ class LongCache:
 
         return decorate(func) if func is not None else decorate
 
+    @execution_operation
+    def _pass_through(self, compute, reason, entry_point):
+        with self._lifecycle.operation():
+            result = self._execution.origin(compute)
+            return self._execution.finish(
+                None,
+                None,
+                result,
+                "origin",
+                "sync",
+                "none",
+                entry_point,
+                self._epoch,
+                reason=reason,
+            )
+
+    @execution_operation
+    async def _apass_through(self, compute, reason, entry_point):
+        with self._lifecycle.operation():
+            result = await self._execution.aorigin(compute)
+            return await self._execution.afinish(
+                None,
+                None,
+                result,
+                "origin",
+                "async",
+                "none",
+                entry_point,
+                self._epoch,
+                reason=reason,
+            )
+
     def cached_stream(self, func=None, **kwargs):
         # Preserve the generator interface while unsupported replay remains pass-through.
         return func if func is not None else lambda fn: fn
 
     def inspect(self, query, namespace=None, *, context=None, **legacy):
-        return self.lookup(query, namespace, context=context, _inspect=True, **legacy).inspection()
+        return self.lookup(
+            query, namespace, context=context, _inspect=True, _internal=True, **legacy
+        ).inspection()
 
     @managed
     def invalidate(self, namespace=None, *, context=None, **legacy):
@@ -686,6 +738,10 @@ class LongCache:
                 "total_saved_ms": 0.0,
                 "estimated_tokens_saved": 0,
                 "estimated_cost_saved_usd": 0.0,
+                "stats_window_started_at": self._stats_started_at
+                if operator
+                else counts.get("_started_at"),
+                "stats_retention_evictions": self._stats_evictions,
             }
 
     def _sweep(self):

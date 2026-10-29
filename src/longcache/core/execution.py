@@ -39,8 +39,8 @@ class Execution:
             raise ValueError("Tags must be strings")
         return tuple(sorted(set(tags or ())))
 
-    async def afinish(self, *args):
-        return await self.cache._lifecycle.call(self.finish, *args)
+    async def afinish(self, *args, **kwargs):
+        return await self.cache._lifecycle.call(self.finish, *args, **kwargs)
 
     async def aclaim(self, *args):
         future, token = self.cache._lifecycle.submit(self.claim, *args)
@@ -96,7 +96,18 @@ class Execution:
         )
 
     def finish(
-        self, prepared, decision, response, source, mode, role, entry_point, epoch, *, _cancel=None
+        self,
+        prepared,
+        decision,
+        response,
+        source,
+        mode,
+        role,
+        entry_point,
+        epoch,
+        *,
+        reason=None,
+        _cancel=None,
     ):
         cache = self.cache
         with cache._mutation_lock:
@@ -118,9 +129,20 @@ class Execution:
                         pass
                 cache._account(prepared[1], "hits" if source == "cache" else "misses")
         outcome = "hit" if source == "cache" else "miss" if prepared else "bypass"
+        reason = reason or (
+            "accepted_shared_result"
+            if source == "coalesced"
+            else decision.reason
+            if decision
+            else "no_candidate"
+            if prepared
+            else "missing_identity"
+        )
         cache._observability.count("requests", operation="execution", outcome=outcome, mode=mode)
+        if role == "follower":
+            cache._observability.count("singleflight", role=role, source=source, outcome=outcome)
         cache._observability.count(
-            "decisions", operation="execution", outcome=outcome, source=source
+            "decisions", operation="execution", outcome=outcome, source=source, reason=reason
         )
         cache._observability.event(
             operation="execution",
@@ -129,11 +151,14 @@ class Execution:
             mode=mode,
             role=role,
             entry_point=entry_point,
+            reason=reason,
         )
         return response
 
     def envelope(self, result, context, expires_at):
-        payload, admission = admit(result, context, self.cache._admit)
+        payload, admission = self.cache._dependency(
+            "admission", admit, result, context, self.cache._admit
+        )
         if admission.action != "accept":
             return Completion("non_shareable")
         encoded = canonical(payload).encode("utf-8")
@@ -153,13 +178,17 @@ class Execution:
         if completion.expires_at is not None and time.time() >= completion.expires_at:
             return None, False
         response = decode_response(json.loads(completion.payload), context.codec)
-        payload, admission = admit(response, context, self.cache._admit)
+        payload, admission = self.cache._dependency(
+            "admission", admit, response, context, self.cache._admit
+        )
         if admission.action != "accept":
             return None, False
-        verification = verify(query, query, payload, 1.0, context, self.cache._verifier)
+        verification = self.cache._dependency(
+            "verification", verify, query, query, payload, 1.0, context, self.cache._verifier
+        )
         self.cache._observability.count(
             "verification",
-            outcome="hit" if verification.action == "accept" else "rejected",
+            outcome=verification.action,
             reason=verification.reason,
         )
         return response, verification.action == "accept"
@@ -184,6 +213,9 @@ class Execution:
                     result.close()
                 raise TypeError("Use aget_or_compute with an asynchronous callback")
             return result
+        except BaseException:
+            self.cache._observability.count("errors", stage="origin", reason="provider_failed")
+            raise
         finally:
             self.cache._observability.duration("origin", time.monotonic() - started)
 
@@ -195,6 +227,9 @@ class Execution:
             if not inspect.isawaitable(pending):
                 raise TypeError("aget_or_compute requires an awaitable-producing callback")
             return await pending
+        except BaseException:
+            self.cache._observability.count("errors", stage="origin", reason="provider_failed")
+            raise
         finally:
             self.cache._observability.duration("origin", time.monotonic() - started, "async")
 

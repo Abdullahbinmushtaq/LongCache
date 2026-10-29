@@ -3,9 +3,16 @@
 from functools import wraps
 import sqlite3
 import time
+import asyncio
+import inspect
 
 from .decision import LookupDecision, StoreDecision
 from .errors import CacheError, CacheOperationError
+from .errors import (
+    SingleflightTimeoutError,
+    SingleflightCapacityError,
+    SingleflightInvalidatedError,
+)
 
 
 def operational(exception, stage):
@@ -85,3 +92,50 @@ def decision_operation(operation):
         return wrapped
 
     return decorate
+
+
+def execution_operation(function):
+    """Record terminal failures once; successful delivery is recorded centrally."""
+
+    def failed(cache, error, mode):
+        if isinstance(error, asyncio.CancelledError):
+            outcome, reason = "cancelled", "cancelled"
+        elif isinstance(error, SingleflightTimeoutError):
+            outcome, reason = "timeout", "timeout"
+        elif isinstance(error, SingleflightCapacityError):
+            outcome, reason = "error", "capacity"
+        elif isinstance(error, SingleflightInvalidatedError):
+            outcome, reason = "error", "invalidated"
+        else:
+            outcome, reason = "error", "leader_failed"
+        cache._observability.count("requests", operation="execution", outcome=outcome, mode=mode)
+        cache._observability.count("singleflight", outcome=outcome, reason=reason)
+        cache._observability.event(operation="execution", outcome=outcome, reason=reason, mode=mode)
+
+    if inspect.iscoroutinefunction(function):
+
+        @wraps(function)
+        async def async_wrapped(self, *args, **kwargs):
+            started = time.monotonic()
+            try:
+                return await function(self, *args, **kwargs)
+            except BaseException as exc:
+                failed(self, exc, "async")
+                raise
+            finally:
+                self._observability.duration("execution", time.monotonic() - started, "async")
+
+        return async_wrapped
+
+    @wraps(function)
+    def wrapped(self, *args, **kwargs):
+        started = time.monotonic()
+        try:
+            return function(self, *args, **kwargs)
+        except BaseException as exc:
+            failed(self, exc, "sync")
+            raise
+        finally:
+            self._observability.duration("execution", time.monotonic() - started)
+
+    return wrapped

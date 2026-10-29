@@ -110,6 +110,11 @@ class LongCacheMiddleware:
         if isinstance(data, dict):
             prepared, reason = prepare_request(data, base, "openai-dict-v1")
         if prepared is None:
+            self.cache._observability.count("requests", operation="lookup", outcome="bypass")
+            self.cache._observability.count(
+                "decisions", operation="lookup", outcome="bypass", reason=reason
+            )
+            self.cache._observability.event(entry_point="asgi", outcome="bypass", reason=reason)
             await self.app(scope, replay, self._decision_send(send, "BYPASS", reason))
             return
         query, ctx = prepared
