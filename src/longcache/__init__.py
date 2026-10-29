@@ -12,6 +12,19 @@ from .core.identity import Instruction, RequestContext, RequestScope
 from .core.decision import LookupDecision, StoreDecision, PolicyDecision
 from .core.base_embedder import BaseEmbedder
 from .core.embedding_contract import EmbeddingDescriptor
+from .core.errors import (
+    CacheError,
+    CacheClosedError,
+    CacheShutdownTimeoutError,
+    CacheCapacityError,
+    CacheOperationError,
+    SingleflightError,
+    SingleflightTimeoutError,
+    SingleflightCapacityError,
+    SingleflightLeaderError,
+    SingleflightReentrancyError,
+    SingleflightInvalidatedError,
+)
 
 __all__ = [
     "LongCache",
@@ -24,4 +37,15 @@ __all__ = [
     "PolicyDecision",
     "BaseEmbedder",
     "EmbeddingDescriptor",
+    "CacheError",
+    "CacheClosedError",
+    "CacheShutdownTimeoutError",
+    "CacheCapacityError",
+    "CacheOperationError",
+    "SingleflightError",
+    "SingleflightTimeoutError",
+    "SingleflightCapacityError",
+    "SingleflightLeaderError",
+    "SingleflightReentrancyError",
+    "SingleflightInvalidatedError",
 ]

@@ -21,6 +21,9 @@ from .identity import Instruction, RequestContext, canonical, digest
 from .index import SimilarityIndex
 from .lifecycle import Lifecycle, managed
 from .errors import CacheClosedError
+from .errors import CacheOperationError
+from .observability import Observability
+from .reliability import dependency, decision_operation, operational
 from .policy import admit, decode_response, verify
 
 
@@ -52,6 +55,9 @@ class LongCache:
         self._stats = Counter()
         self._partition_stats = {}
         self._closed = False
+        self._coherent = True
+        self._background_failed = False
+        self._observability = Observability(self.config.track_stats, self.config.backend)
         self._ready = False
         self._stop_event = threading.Event()
         self.embedder = (
@@ -67,8 +73,12 @@ class LongCache:
         )
         # Metadata-only construction does not load/download model weights.
         try:
-            if self.backend.list_all_entries():
+            if self._dependency("backend", self.backend.list_all_entries):
                 self._ensure_ready()
+        except CacheOperationError:
+            if self.config.cache_error_policy != "bypass":
+                self.backend.close() if hasattr(self.backend, "close") else None
+                raise
         except Exception:
             if hasattr(self.backend, "close"):
                 self.backend.close()
@@ -101,11 +111,16 @@ class LongCache:
     def _ensure_open(self):
         self._lifecycle.ensure_open()
 
+    def _dependency(self, stage, function, *args, **kwargs):
+        return dependency(self, stage, function, *args, **kwargs)
+
     def _ensure_ready(self):
         with self._mutation_lock:
             self._ensure_open()
+            if not self._coherent:
+                raise CacheOperationError("coherence_uncertain")
             if self._metadata_only:
-                manifest = self.backend.read_manifest()
+                manifest = self._dependency("backend", self.backend.read_manifest)
                 if manifest and (
                     manifest.get("format") != 2
                     or manifest.get("cache_id") != self.config.cache_id
@@ -115,16 +130,18 @@ class LongCache:
                 self._fingerprint = digest(manifest["embedding"]) if manifest else "empty-store"
                 self._ready = True
                 return
-            descriptor = self._embedding.descriptor
+            descriptor = self._dependency("embedding", lambda: self._embedding.descriptor)
             if self._ready:
                 return
-            self.backend.ensure_manifest(
+            self._dependency(
+                "backend",
+                self.backend.ensure_manifest,
                 {
                     "format": 2,
                     "cache_id": self.config.cache_id,
                     "generation": self.config.generation,
                     "embedding": asdict(descriptor),
-                }
+                },
             )
             if not self._ready:
                 self._fingerprint = descriptor.fingerprint
@@ -135,7 +152,7 @@ class LongCache:
         if self._metadata_only:
             return
         entries = []
-        for entry in self.backend.list_all_entries():
+        for entry in self._dependency("backend", self.backend.list_all_entries):
             metadata = entry.metadata
             if metadata.get("format") != 2 or metadata.get("embedding") != self._fingerprint:
                 continue
@@ -144,7 +161,7 @@ class LongCache:
             except ValueError:
                 continue
             entries.append(entry)
-        self.index.rebuild(entries)
+        self._dependency("index", self.index.rebuild, entries)
 
     def _prepare(self, query, context, namespace, legacy):
         self._ensure_open()
@@ -197,6 +214,7 @@ class LongCache:
             self._partition_stats.setdefault(partition, Counter())[outcome] += 1
 
     @managed
+    @decision_operation("lookup")
     def lookup(
         self,
         query,
@@ -222,10 +240,18 @@ class LongCache:
         if reason:
             return LookupDecision("BYPASS", reason, threshold=threshold)
         ctx, partition, identity = prepared
-        vector = self._embedding.embed(query)
+        vector = self._dependency("embedding", self._embedding.embed, query)
         with self._mutation_lock:
-            candidates = self.index.candidates(
-                vector, partition, threshold, self.config.verification_budget + 1
+            candidates = self._dependency(
+                "index",
+                self.index.candidates,
+                vector,
+                partition,
+                threshold,
+                self.config.verification_budget + 1,
+                retrieve=lambda identifier: self._dependency(
+                    "backend", self.backend.retrieve, identifier
+                ),
             )
         reason, last_score = "no_candidate", None
         for entry, score in candidates[: self.config.verification_budget]:
@@ -249,12 +275,17 @@ class LongCache:
                 continue
             last_score = score
             verification = verify(query, entry.query, payload, score, ctx, self._verifier)
+            self._observability.count(
+                "verification",
+                outcome="hit" if verification.action == "accept" else "rejected",
+                reason=verification.reason,
+            )
             if verification.action != "accept":
                 reason = verification.reason
                 continue
             with self._mutation_lock:
                 self._ensure_open()
-                current = self.backend.retrieve(entry.id)
+                current = self._dependency("backend", self.backend.retrieve, entry.id)
                 if (
                     current is None
                     or current.namespace != partition
@@ -274,7 +305,10 @@ class LongCache:
                 if _cancel is not None and _cancel.is_set():
                     return LookupDecision("BYPASS", "cancelled", threshold=threshold)
                 if not _inspect:
-                    self.backend.update_hit_count(entry.id)
+                    try:
+                        self._dependency("accounting", self.backend.update_hit_count, entry.id)
+                    except CacheOperationError:
+                        pass  # Optional persisted accounting cannot invalidate a verified hit.
                     self._account(partition, "hits")
                 return LookupDecision("HIT", "accepted", response, score, entry.id, threshold)
         if len(candidates) > self.config.verification_budget:
@@ -334,6 +368,7 @@ class LongCache:
         ).response
 
     @managed
+    @decision_operation("store")
     def set(
         self,
         query,
@@ -361,6 +396,11 @@ class LongCache:
             return StoreDecision("REJECTED", reason)
         ctx, partition, identity = prepared
         payload, decision = admit(response, ctx, self._admit)
+        self._observability.count(
+            "admission",
+            outcome="stored" if decision.action == "accept" else "rejected",
+            reason=decision.reason,
+        )
         if decision.action != "accept":
             return StoreDecision("REJECTED", decision.reason)
         effective_ttl = self.config.ttl_seconds if ttl is None else ttl
@@ -370,7 +410,7 @@ class LongCache:
             not isinstance(tags, (list, tuple)) or not all(type(t) is str for t in tags)
         ):
             raise ValueError("Tags must be strings")
-        vector = self._embedding.embed(query)
+        vector = self._dependency("embedding", self._embedding.embed, query)
         now = time.time()
         entry = CacheEntry(
             namespace=partition,
@@ -391,16 +431,23 @@ class LongCache:
             self._ensure_open()
             if _cancel is not None and _cancel.is_set():
                 return StoreDecision("REJECTED", "cancelled")
-            identifier = self.backend.store(entry)
             try:
-                self.index.add(vector, identifier)
-            except Exception:
-                self.backend.delete(identifier)
+                identifier = self._dependency("store", self.backend.store, entry)
+                try:
+                    self._dependency("index", self.index.add, vector, identifier)
+                except Exception:
+                    self._dependency("store", self.backend.delete, identifier)
+                    raise
+                excess = (
+                    self._dependency("backend", self.backend.count, partition)
+                    - self.config.max_entries
+                )
+                if excess > 0:
+                    self._dependency("store", self.backend.evict_oldest, partition, excess)
+                    self._rebuild_index_from_backend()
+            except BaseException:
+                self._coherent = False
                 raise
-            excess = self.backend.count(partition) - self.config.max_entries
-            if excess > 0:
-                self.backend.evict_oldest(partition, excess)
-                self._rebuild_index_from_backend()
         return StoreDecision("STORED", "accepted", identifier)
 
     async def aset(self, query, response, namespace=None, **kwargs):
@@ -493,9 +540,13 @@ class LongCache:
         if reason:
             return 0
         with self._mutation_lock:
-            count = self.backend.delete_namespace(prepared[1])
-            self._rebuild_index_from_backend()
-            return count
+            try:
+                count = self._dependency("store", self.backend.delete_namespace, prepared[1])
+                self._rebuild_index_from_backend()
+                return count
+            except BaseException:
+                self._coherent = False
+                raise
 
     @managed
     def invalidate_by_tag(self, tag, namespace=None, *, context=None, **legacy):
@@ -503,9 +554,13 @@ class LongCache:
         if reason:
             return 0
         with self._mutation_lock:
-            count = self.backend.delete_by_tag(tag, prepared[1])
-            self._rebuild_index_from_backend()
-            return count
+            try:
+                count = self._dependency("store", self.backend.delete_by_tag, tag, prepared[1])
+                self._rebuild_index_from_backend()
+                return count
+            except BaseException:
+                self._coherent = False
+                raise
 
     @managed
     def clear(self, *, operator=False):
@@ -513,9 +568,13 @@ class LongCache:
         if not operator:
             raise ValueError("Clearing all partitions requires explicit operator=True")
         with self._mutation_lock:
-            count = self.backend.clear()
-            self.index.rebuild([])
-            return count
+            try:
+                count = self._dependency("store", self.backend.clear)
+                self._dependency("index", self.index.rebuild, [])
+                return count
+            except BaseException:
+                self._coherent = False
+                raise
 
     @managed
     def entries(self, namespace=None, *, context=None, operator=False):
@@ -553,13 +612,35 @@ class LongCache:
             }
 
     def _sweep(self):
-        while not self._stop_event.wait(60):
+        delay, failures = 60, 0
+        while not self._stop_event.wait(delay):
             try:
                 with self._lifecycle.operation(), self._mutation_lock:
-                    if self.backend.sweep_expired() and self._ready:
+                    if not self._coherent:
+                        return
+                    if self._dependency("sweeper", self.backend.sweep_expired) and self._ready:
                         self._rebuild_index_from_backend()
             except CacheClosedError:
                 return
+            except Exception as exc:
+                self._observability.event(warning=True, stage="sweeper", reason="background_failed")
+                if not isinstance(exc, CacheOperationError) and not operational(exc, "sweeper"):
+                    self._background_failed = True
+                    return
+                failures += 1
+                delay = min(60, 2 ** min(failures - 1, 6))
+            else:
+                delay, failures = 60, 0
+
+    def metrics(self, *, operator=False):
+        """Return process-wide redacted measurements without backend I/O."""
+        if not operator:
+            raise ValueError("Process-wide metrics require operator=True")
+        return {
+            **self._observability.snapshot(),
+            "resources": self._lifecycle.snapshot(),
+            "health": "degraded" if not self._coherent or self._background_failed else "healthy",
+        }
 
     def _revoke_flights(self):
         if hasattr(self, "_execution"):
