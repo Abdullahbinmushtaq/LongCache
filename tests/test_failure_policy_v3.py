@@ -64,6 +64,7 @@ def test_partial_write_quarantines_state(monkeypatch, policy):
 
 def test_bypass_never_hides_invalid_embedding_contract(monkeypatch):
     with cache_for("bypass") as cache:
+        cache.set("policy", "answer")
 
         def invalid(*_):
             raise ValueError("Invalid embedding shape")

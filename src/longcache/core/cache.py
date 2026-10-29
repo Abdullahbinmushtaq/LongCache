@@ -168,7 +168,7 @@ class LongCache:
             entries.append(entry)
         self._dependency("index", self.index.rebuild, entries)
 
-    def _prepare(self, query, context, namespace, legacy):
+    def _prepare(self, query, context, namespace, legacy, *, _initialize=True):
         self._ensure_open()
         if context is not None and any(value is not None for value in legacy.values()):
             raise ValueError("Legacy context keywords cannot override RequestContext")
@@ -206,7 +206,8 @@ class LongCache:
             return None, "unsupported_request_shape"
         if type(namespace or self.config.namespace) is not str:
             raise ValueError("Namespace must be a string")
-        self._ensure_ready()
+        if _initialize:
+            self._ensure_ready()
         ns = namespace if namespace is not None else self.config.namespace
         record = ctx.record(ns, policy, self._fingerprint, self.config.policy_version)
         identity = canonical(record)
@@ -252,6 +253,11 @@ class LongCache:
         if reason:
             return LookupDecision("BYPASS", reason, threshold=threshold)
         ctx, partition, identity = prepared
+        with self._mutation_lock:
+            if self.index.size == 0:
+                if not _inspect and _record and not _cancel.is_set():
+                    self._account(partition, "misses")
+                return LookupDecision("MISS", "no_candidate", threshold=threshold)
         vector = self._dependency("embedding", self._embedding.embed, query)
         with self._mutation_lock:
             candidates = self._dependency(
@@ -752,7 +758,11 @@ class LongCache:
                     if not self._coherent:
                         return
                     if self._dependency("sweeper", self.backend.sweep_expired) and self._ready:
-                        self._rebuild_index_from_backend()
+                        try:
+                            self._rebuild_index_from_backend()
+                        except BaseException:
+                            self._coherent = False
+                            raise
             except CacheClosedError:
                 return
             except Exception as exc:
@@ -771,7 +781,11 @@ class LongCache:
             raise ValueError("Process-wide metrics require operator=True")
         return {
             **self._observability.snapshot(),
-            "resources": {**self._lifecycle.snapshot(), **self._execution.registry.snapshot()},
+            "resources": {
+                **self._lifecycle.snapshot(),
+                **self._execution.registry.snapshot(),
+                "sqlite_connections": int(getattr(self.backend, "_connection", None) is not None),
+            },
             "health": "degraded" if not self._coherent or self._background_failed else "healthy",
         }
 
@@ -787,6 +801,8 @@ class LongCache:
         self._closed = True
 
     def close(self, timeout=None):
+        if self._lifecycle.current is not None:
+            raise CacheClosedError("Cannot close the cache from its own active operation")
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -798,6 +814,8 @@ class LongCache:
         self._lifecycle.close(timeout)
 
     async def aclose(self, timeout=None):
+        if self._lifecycle.current is not None:
+            raise CacheClosedError("Cannot close the cache from its own active operation")
         self._stop_event.set()
         await self._lifecycle.aclose(timeout)
 
@@ -809,6 +827,7 @@ class LongCache:
         try:
             self.close()
         except Exception:
+            self._observability.event(warning=True, stage="lifecycle", reason="shutdown")
             if exc is None:
                 raise
 
@@ -820,6 +839,7 @@ class LongCache:
         try:
             await self.aclose()
         except Exception:
+            self._observability.event(warning=True, stage="lifecycle", reason="shutdown")
             if exc is None:
                 raise
 

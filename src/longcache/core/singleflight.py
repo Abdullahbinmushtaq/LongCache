@@ -13,6 +13,7 @@ class Completion:
     payload: bytes | None = None
     error: BaseException | None = field(default=None, repr=False)
     expires_at: float | None = None
+    entry_id: int | None = None
 
 
 @dataclass(eq=False)
@@ -33,9 +34,14 @@ class Singleflight:
         self.max_followers = config.singleflight_max_waiters_per_key
         self.max_payload = config.max_capture_bytes
         self.max_retained = 32 * 1024 * 1024
+        self.epoch = 0
 
     def claim(self, key):
         with self._lock:
+            if key[2] != self.epoch:
+                raise SingleflightInvalidatedError(
+                    "Flight identity was invalidated before registration"
+                )
             flight = self._flights.get(key)
             if flight is not None:
                 if flight.followers >= self.max_followers:
@@ -79,6 +85,8 @@ class Singleflight:
             else SingleflightInvalidatedError("Shared execution was invalidated")
         )
         with self._lock:
+            if not shutdown:
+                self.epoch += 1
             flights = list(self._flights.values())
             self._flights.clear()
             for flight in flights:

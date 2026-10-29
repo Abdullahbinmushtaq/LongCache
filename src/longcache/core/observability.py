@@ -85,6 +85,7 @@ FAMILIES = {
     "verification",
     "admission",
     "singleflight",
+    "shared_deliveries",
     "origin_executions",
     "observability_drops",
 }
@@ -113,7 +114,14 @@ class Observability:
     def _labels(labels):
         return tuple(
             sorted(
-                (key, value if type(value) is str and value in LABELS[key] else "other")
+                (
+                    key,
+                    value
+                    if type(value) is str and value in LABELS[key]
+                    else "application_policy"
+                    if key == "reason"
+                    else "other",
+                )
                 for key, value in labels.items()
                 if key in LABELS
             )

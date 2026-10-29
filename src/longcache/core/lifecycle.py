@@ -25,6 +25,7 @@ def managed(function):
 class Operation:
     def __init__(self):
         self.cancelled = threading.Event()
+        self.shutdown_cancelled = False
         try:
             self.task = asyncio.current_task()
         except RuntimeError:
@@ -120,6 +121,8 @@ class Lifecycle:
             binding = self._current.set((token, self._actor()))
             try:
                 self.ensure_open()
+                if token.is_set():
+                    raise CacheClosedError("Queued cache operation was cancelled")
                 return function(*args, _cancel=token, **kwargs)
             finally:
                 self._current.reset(binding)
@@ -149,7 +152,9 @@ class Lifecycle:
             return await asyncio.shield(bridge)
         except asyncio.CancelledError:
             token.set()
-            future.cancel()
+            # Keep capacity reserved until the worker dequeues this item. Cancelling
+            # a queued Future would free the slot while its WorkItem still retains
+            # arguments, allowing repeated cancellations to grow the queue forever.
             raise
 
     def _finish_if_idle(self):
@@ -165,7 +170,8 @@ class Lifecycle:
         finally:
             self._executor.shutdown(wait=False, cancel_futures=True)
             with self._condition:
-                self.state = "CLOSED"
+                if self._failure is None:
+                    self.state = "CLOSED"
                 self._condition.notify_all()
 
     def close(self, timeout=None):
@@ -181,10 +187,22 @@ class Lifecycle:
         self._finish_if_idle()
         with self._condition:
             while self.state != "CLOSED":
+                if self._failure is not None:
+                    raise CacheClosedError(
+                        "Cache resource cleanup failed; resources may remain open"
+                    ) from self._failure
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    for token in self._active:
+                    pending = list(self._active)
+                    for token in pending:
                         token.set()
+                    cancel_tasks = [
+                        token.task
+                        for token in pending
+                        if token.task is not None and not token.shutdown_cancelled
+                    ]
+                    for token in pending:
+                        token.shutdown_cancelled = True
                     break
                 self._condition.wait(remaining)
             else:
@@ -192,11 +210,11 @@ class Lifecycle:
                     raise CacheClosedError("Cache resource cleanup failed") from self._failure
                 return
         self._revoke()
-        for token in list(self._active):
-            if token.task is not None and not token.task.done():
-                loop = token.task.get_loop()
+        for task in cancel_tasks:
+            if not task.done():
+                loop = task.get_loop()
                 if not loop.is_closed():
-                    loop.call_soon_threadsafe(token.task.cancel)
+                    loop.call_soon_threadsafe(task.cancel)
         raise CacheShutdownTimeoutError("Cache cleanup is pending active operations")
 
     async def aclose(self, timeout=None):
