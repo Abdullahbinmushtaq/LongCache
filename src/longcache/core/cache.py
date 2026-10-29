@@ -563,12 +563,15 @@ class LongCache:
                     ctx = resolve((query,), {})
                     if ctx is None:
                         return await fn(query)
-                    decision = await self.alookup(query, namespace, context=ctx)
-                    if decision.outcome == "HIT":
-                        return decision.response
-                    result = await fn(query)
-                    await self.aset(query, result, namespace, context=ctx, ttl=ttl, tags=tags)
-                    return result
+                    return await self.aget_or_compute(
+                        query,
+                        lambda: fn(query),
+                        context=ctx,
+                        namespace=namespace,
+                        ttl=ttl,
+                        tags=tags,
+                        _entry_point="decorator",
+                    )
 
                 async_wrapper.cache_context_for = context_for
                 return async_wrapper
@@ -580,12 +583,15 @@ class LongCache:
                 ctx = resolve((query,), {})
                 if ctx is None:
                     return fn(query)
-                decision = self.lookup(query, namespace, context=ctx)
-                if decision.outcome == "HIT":
-                    return decision.response
-                result = fn(query)
-                self.set(query, result, namespace, context=ctx, ttl=ttl, tags=tags)
-                return result
+                return self.get_or_compute(
+                    query,
+                    lambda: fn(query),
+                    context=ctx,
+                    namespace=namespace,
+                    ttl=ttl,
+                    tags=tags,
+                    _entry_point="decorator",
+                )
 
             wrapper.cache_context_for = context_for
             return wrapper

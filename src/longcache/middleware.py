@@ -6,6 +6,7 @@ import inspect
 import json
 from longcache import CacheConfig, LongCache, RequestScope
 from longcache.integrations.openai import prepare_request
+from longcache import CacheOperationError
 
 
 def _object(pairs):
@@ -31,6 +32,7 @@ class LongCacheMiddleware:
         scope_resolver=None,
     ):
         self.app = app
+        self._owns_cache = cache is None
         self.cache = cache if cache is not None else LongCache(config or CacheConfig())
         self.namespace = namespace
         self.routes = set(cached_routes or {"/v1/chat/completions", "/chat/completions"})
@@ -164,7 +166,17 @@ class LongCacheMiddleware:
                 response = json.loads(b"".join(parts), object_pairs_hook=_object)
             except (ValueError, UnicodeDecodeError):
                 return
-            await self.cache.aset(query, response, self.namespace, context=ctx)
+            try:
+                await self.cache.aset(query, response, self.namespace, context=ctx)
+            except CacheOperationError:
+                # Upstream already sent its response. It cannot be retracted or
+                # safely executed again because optional persistence failed.
+                pass
+
+    async def aclose(self):
+        """Wire into application lifespan when this middleware created its cache."""
+        if self._owns_cache:
+            await self.cache.aclose()
 
     @staticmethod
     def _replay(frames, receive):
