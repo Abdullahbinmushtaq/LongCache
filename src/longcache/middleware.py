@@ -6,7 +6,7 @@ import inspect
 import json
 from longcache import CacheConfig, LongCache, RequestScope
 from longcache.integrations.openai import prepare_request
-from longcache import CacheOperationError
+from longcache import CacheError
 
 
 def _object(pairs):
@@ -173,10 +173,12 @@ class LongCacheMiddleware:
                 return
             try:
                 await self.cache.aset(query, response, self.namespace, context=ctx)
-            except CacheOperationError:
+            except CacheError:
                 # Upstream already sent its response. It cannot be retracted or
                 # safely executed again because optional persistence failed.
-                pass
+                self.cache._observability.event(
+                    warning=True, stage="store", reason="cache_unavailable"
+                )
 
     async def aclose(self):
         """Wire into application lifespan when this middleware created its cache."""

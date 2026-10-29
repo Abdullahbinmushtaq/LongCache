@@ -21,9 +21,29 @@
 <a href="https://github.com/ENDEVSOLS/LongCache/blob/main/CHANGELOG.md"><strong>Changelog</strong></a>
 </p>
 
-**LongCache** reuses stored responses when trusted scope, execution context, response admission, and verification permit reuse. Python 3.11 and 3.12 are tested and  remains the Python 3.10-compatible line. Measure response quality, latency, and savings on your own workload.
+**v0.3.0 is unreleased.** This checkout adds single-process reliability; package-index commands install the currently published release.
+
+**LongCache** reuses stored responses when trusted scope, execution context, response admission, and verification permit reuse. Python 3.11 and 3.12 are tested; v0.1.1 remains the Python 3.10-compatible line. Measure response quality, latency, and savings on your own workload.
 
 ---
+
+## Reliability in v0.3.0
+
+Use `cache.get_or_compute(query, lambda: call_provider(query), context=context)` or
+`await cache.aget_or_compute(query, lambda: async_call_provider(query), context=context)`
+to share one execution among identical concurrent requests. Supported query-only
+decorators and OpenAI wrappers use the same coordination. Separate manual lookup and
+store calls do not coalesce the intervening computation.
+
+The release adds explicit strict/bypass cache-error policies, finite backend I/O,
+tracked cancellation and shutdown, and private bounded decision metrics. Format-2
+stores remain compatible. Scope, admission, verification, and supported-shape rules
+remain mandatory. Redis-backed caches still support one instance/process per index.
+
+See [reliability and upgrade guidance](docs/reliability.md), run the offline
+`python examples/reliability.py`, and inspect the [v0.3 execution record](docs/plans/v0.3.0-execution.md)
+for local evidence and remaining release gates. Prometheus/OpenTelemetry and new
+schema/Pydantic caching are deferred.
 
 ## Why LongCache?
 
@@ -47,7 +67,7 @@
 # Core — SQLite backend + FAISS + BGE-small (no external services needed)
 uv pip install longcache
 
-# With LangChain + LangGraph compatibility adapters (pass-through in v0.2)
+# With LangChain + LangGraph compatibility adapters (pass-through in v0.3)
 uv pip install longcache[langchain]
 
 # With Redis response storage (FAISS index remains local to this process)
@@ -245,7 +265,7 @@ cache = LongCache(config, context=context)
 - ✅ **Redis Backend:** Versioned durable response storage with TTL; one LongCache process per generation
 - ✅ **Async Redis Backend:** Experimental standalone storage interface; unsupported through `LongCache`
 - ✅ **In-Memory Backend:** Zero I/O, ideal for unit tests and CI/CD pipelines
-- ✅ **LangChain Integration:** `CachedLLM` and `CachedChain` compatibility wrappers; pass-through in v0.2
+- ✅ **LangChain Integration:** `CachedLLM` and `CachedChain` compatibility wrappers; pass-through in v0.3
 - ✅ **LangGraph Integration:** `CachedState` compatibility interface; graph state is not cached in v0.2
 - ✅ **LlamaIndex Integration:** `CachedQueryEngine` preserves the engine interface without caching opaque state
 - ✅ **OpenAI Integration:** Supported single-turn text requests with explicit context; sync/async dict and SDK replay
@@ -297,7 +317,7 @@ cache = LongCache(
 
 ### Async Redis backend status
 
-`AsyncRedisCacheBackend` can be used and tested as a standalone storage backend. It is not supported through `LongCache` in v0.2.0; selecting `backend="async_redis"` fails immediately. End-to-end async Redis integration is planned for a later release.
+`AsyncRedisCacheBackend` can be used and tested as a standalone storage backend. It is not supported through `LongCache` in v0.3.0; selecting `backend="async_redis"` fails immediately. End-to-end async Redis integration is planned for a later release.
 
 ### In-Memory (Testing & CI)
 
@@ -414,14 +434,15 @@ uv pip install longcache[openai]
 from openai import OpenAI
 from longcache.integrations.openai import CachedOpenAI
 
-client = CachedOpenAI(OpenAI(), cache=LongCache(), context=context)
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "What is RAG?"}],
-)
+with OpenAI(timeout=20.0, max_retries=0) as provider, LongCache() as cache:
+    client = CachedOpenAI(provider, cache=cache, context=context)
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "What is RAG?"}],
+    )
 ```
 
-In v0.2.0, OpenAI caching requires a complete trusted context and the supported single-turn text subset. Multi-turn, tool, multimodal, structured-output, streaming, and unknown-parameter requests bypass. Complete responses require `finish_reason="stop"`. For varying identities, pass `cache_context=per_request_context`; namespaces alone do not establish tenant isolation.
+In v0.3.0, OpenAI caching requires a complete trusted context and the supported single-turn text subset. Multi-turn, tool, multimodal, structured-output, streaming, and unknown-parameter requests bypass. Complete responses require `finish_reason="stop"`. For varying identities, pass `cache_context=per_request_context`; namespaces alone do not establish tenant isolation.
 
 ---
 

@@ -1,6 +1,7 @@
 {
   "protocol": "reliability-v1",
   "seed": 303,
+  "threshold": 0.92,
   "cache_sizes": [1000, 10000],
   "indexes": ["flat", "hnsw"],
   "repeats": 5,

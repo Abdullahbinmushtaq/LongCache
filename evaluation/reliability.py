@@ -63,7 +63,12 @@ def source_hash(root):
     ).hexdigest()
 
 
-def worker(real_model=False):
+def worker(
+    real_model=False,
+    *,
+    model="BAAI/bge-small-en-v1.5",
+    revision="5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+):
     import faiss
     import longcache
     from longcache.core.entry import CacheEntry
@@ -80,8 +85,8 @@ def worker(real_model=False):
         torch.set_num_threads(1)
         underlying = LocalEmbedder(
             snapshot_download(
-                "BAAI/bge-small-en-v1.5",
-                revision="5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+                model,
+                revision=revision,
                 local_files_only=True,
             )
         )
@@ -89,8 +94,8 @@ def worker(real_model=False):
     class Embedder(longcache.BaseEmbedder):
         dimension = 384
         descriptor = longcache.EmbeddingDescriptor(
-            "BAAI/bge-small-en-v1.5" if real_model else "benchmark-hash",
-            "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a" if real_model else "sha256-v1",
+            model if real_model else "benchmark-hash",
+            revision if real_model else "sha256-v1",
             384,
         )
 
@@ -118,6 +123,14 @@ def worker(real_model=False):
         "source_hash": source_hash(Path(longcache.__file__).parent),
         "has_singleflight": candidate,
     }
+    from importlib.metadata import version as package_version
+    from dataclasses import asdict
+
+    identity["dependencies"] = {
+        name: package_version(name)
+        for name in ("numpy", "faiss-cpu", "torch", "sentence-transformers")
+    }
+    identity["embedding"] = asdict(embedder.descriptor)
     print(json.dumps(identity), flush=True)
 
     def invoke(text, compute):
@@ -153,6 +166,7 @@ def worker(real_model=False):
                     faiss_index_type=command["index"],
                     max_entries=max(20000, command["entries"]),
                     track_stats=command.get("tracking", True),
+                    similarity_threshold=command.get("threshold", 0.92),
                 )
                 cache = longcache.LongCache(config, embedder=embedder)
                 prepared, reason = cache._prepare(query, context, None, {})
@@ -266,6 +280,8 @@ def worker(real_model=False):
             elif action == "resources":
                 result = {
                     "rss_peak_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                    "cpu_user_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_utime,
+                    "cpu_system_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_stime,
                     "threads": threading.active_count(),
                     "metrics": cache.metrics(operator=True) if candidate else None,
                 }
@@ -297,7 +313,8 @@ def main():
     parser.add_argument("--worker", action="store_true")
     args = parser.parse_args()
     if args.worker:
-        worker(args.real_model)
+        settings = json.loads(args.config.read_text())
+        worker(args.real_model, model=settings["model"], revision=settings["revision"])
         return 0
     if args.baseline_root is None:
         parser.error("--baseline-root must point to the v0.2 source checkout")
@@ -342,7 +359,15 @@ def main():
                 "OMP_NUM_THREADS": "1",
                 "MKL_NUM_THREADS": "1",
             }
-            command = [sys.executable, "-u", "-m", "evaluation.reliability", "--worker"]
+            command = [
+                sys.executable,
+                "-u",
+                "-m",
+                "evaluation.reliability",
+                "--worker",
+                "--config",
+                str(args.config.resolve()),
+            ]
             if args.real_model:
                 command.append("--real-model")
             process = subprocess.Popen(
@@ -360,7 +385,15 @@ def main():
         for index in config["indexes"]:
             for size in config["cache_sizes"]:
                 for process in processes:
-                    reply(process, {"action": "prepare", "index": index, "entries": size})
+                    reply(
+                        process,
+                        {
+                            "action": "prepare",
+                            "index": index,
+                            "entries": size,
+                            "threshold": config["threshold"],
+                        },
+                    )
                     reply(process, {"action": "warm", "count": config["warmup"]})
                 rows = [[], []]
                 repeats = [[], []]
@@ -451,7 +484,7 @@ def main():
                                     if action == "burst"
                                     else config["miss_requests_per_repeat"],
                                     "delay_ms": config["provider_delay_ms"],
-                                    "nonce": repetition,
+                                    "nonce": f"{config['seed']}-{repetition}",
                                 },
                             )
                             runs[which].append(result)

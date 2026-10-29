@@ -786,7 +786,11 @@ class LongCache:
                 **self._execution.registry.snapshot(),
                 "sqlite_connections": int(getattr(self.backend, "_connection", None) is not None),
             },
-            "health": "degraded" if not self._coherent or self._background_failed else "healthy",
+            "health": "degraded"
+            if not self._coherent
+            or self._background_failed
+            or self._lifecycle.snapshot()["cleanup_failed"]
+            else "healthy",
         }
 
     def _revoke_flights(self):

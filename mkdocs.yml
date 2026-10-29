@@ -80,6 +80,10 @@ nav:
     - OpenAI: integrations/openai.md
     - FastAPI: integrations/fastapi.md
     - Changing-document RAG: integrations/versioned-rag.md
+  - Reliability and Upgrade: reliability.md
+  - v0.3 Implementation Plan: plans/v0.3.0.md
+  - v0.3 Execution Record: plans/v0.3.0-execution.md
+  - v0.3 Acceptance Evidence: plans/v0.3.0-acceptance.md
   - CLI Reference: cli.md
   - API Reference: api-reference.md
   - Migration to v0.2: migration-v0.2.md

@@ -1,12 +1,12 @@
 # LongCache
 
-Semantic response reuse for Python LLM and RAG applications. **v0.2.0 is unreleased; Python 3.11 and 3.12 are the tested interpreters.**
+Semantic response reuse for Python LLM and RAG applications. **v0.3.0 is unreleased; Python 3.11 and 3.12 are the tested interpreters.**
 
 LongCache finds similar requests with local embeddings and FAISS, then checks whether their execution context and reuse policy permit the same answer. Similarity alone does not establish correctness. Measure false hits and useful reuse on your own workload.
 
 ## Install
 
-v0.2.0 is currently a development checkout. Package-index commands install the available published release. See [installation](getting-started/installation.md) for installing and validating this branch.
+v0.3.0 is currently a development checkout. Package-index commands install the available published release. See [installation](getting-started/installation.md) for installing and validating this branch.
 
 ```bash
 uv pip install longcache
@@ -180,3 +180,7 @@ The recorded local validation passed 372 tests with zero skips on each of Python
 ## License
 
 MIT. See [MIT license](https://github.com/ENDEVSOLS/LongCache/blob/main/LICENSE).
+
+## v0.3 reliability
+
+Shared execution, strict/bypass failure policy, owned shutdown and bounded private measurements are documented in [reliability](reliability.md). See the [v0.3 execution record](plans/v0.3.0-execution.md) for new validation; the v0.2 results above remain historical evidence.
