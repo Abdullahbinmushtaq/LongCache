@@ -583,9 +583,8 @@ class Execution:
                 started = time.monotonic()
                 try:
                     try:
-                        completion = await asyncio.wait_for(
-                            asyncio.shield(asyncio.wrap_future(state.flight.future)),
-                            cache.config.singleflight_wait_timeout_seconds,
+                        completion = await self.registry.wait(
+                            state.flight, cache.config.singleflight_wait_timeout_seconds
                         )
                     except asyncio.TimeoutError:
                         raise SingleflightTimeoutError(

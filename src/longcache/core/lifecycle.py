@@ -52,7 +52,8 @@ class Lifecycle:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="longcache-worker")
         self._capacity = threading.BoundedSemaphore(64)
         self._jobs = 0
-        self._cleanup_tasks = set()
+        self._close_thread = None
+        self._close_error = None
 
     @property
     def current(self):
@@ -218,19 +219,46 @@ class Lifecycle:
         raise CacheShutdownTimeoutError("Cache cleanup is pending active operations")
 
     async def aclose(self, timeout=None):
-        # Check before moving to a thread; otherwise close would wait on this caller.
+        timeout = self.timeout if timeout is None else timeout
+        if type(timeout) not in (int, float) or not 0 < timeout < float("inf"):
+            raise ValueError("Shutdown timeout must be positive and finite")
         if self.current in self._active:
             raise CacheClosedError("Cannot close the cache from its own active operation")
-        task = asyncio.create_task(asyncio.to_thread(self.close, timeout))
-        self._cleanup_tasks.add(task)
+        deadline = time.monotonic() + timeout
+        with self._condition:
+            if self.state == "CLOSED":
+                return
+            if self._failure is not None:
+                raise CacheClosedError("Cache resource cleanup failed") from self._failure
+            if self._close_thread is None or not self._close_thread.is_alive():
+                self.state = "CLOSING"
+                self._close_error = None
 
-        def finished(result):
-            self._cleanup_tasks.discard(result)
-            if not result.cancelled():
-                result.exception()  # Retrieve failures even if the awaiting caller left.
+                def drain():
+                    try:
+                        self.close(timeout)
+                    except BaseException as exc:
+                        with self._condition:
+                            self._close_error = exc
 
-        task.add_done_callback(finished)
-        await asyncio.shield(task)
+                self._close_thread = threading.Thread(
+                    target=drain, name="longcache-close", daemon=True
+                )
+                self._close_thread.start()
+            worker = self._close_thread
+        # One owned cleanup worker is shared across loops and callers. Polling its
+        # completion retains no callbacks or default-executor jobs after cancellation.
+        while worker.is_alive():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CacheShutdownTimeoutError("Shared cache cleanup is still pending")
+            await asyncio.sleep(min(0.001, remaining))
+        with self._condition:
+            error = self._close_error
+        if isinstance(error, CacheShutdownTimeoutError):
+            raise CacheShutdownTimeoutError(str(error)) from error
+        if error is not None:
+            raise CacheClosedError("Cache resource cleanup failed") from error
 
     def snapshot(self):
         with self._condition:
@@ -238,4 +266,8 @@ class Lifecycle:
                 "state": self.state,
                 "active_operations": sum(self._active.values()),
                 "cache_jobs": self._jobs,
+                "cleanup_failed": self._failure is not None,
+                "cleanup_workers": int(
+                    self._close_thread is not None and self._close_thread.is_alive()
+                ),
             }

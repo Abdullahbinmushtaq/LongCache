@@ -14,6 +14,7 @@ from longcache import (
     LongCache,
     PolicyDecision,
     SingleflightCapacityError,
+    SingleflightTimeoutError,
     CacheClosedError,
 )
 from tests.helpers import HashEmbedder, trusted_context
@@ -217,3 +218,85 @@ def test_uncooperative_sync_provider_cannot_hang_shutdown_process():
         assert not cache._closed
     """)
     subprocess.run([sys.executable, "-c", script], check=True, timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_timed_out_followers_do_not_accumulate_shared_future_callbacks():
+    async with plain_cache(singleflight_wait_timeout_seconds=0.001) as cache:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def origin():
+            entered.set()
+            await release.wait()
+            return "answer"
+
+        leader = asyncio.create_task(cache.aget_or_compute("policy", origin))
+        await entered.wait()
+        flight = next(iter(cache._execution.registry._flights.values()))
+        try:
+            for _ in range(50):
+                with pytest.raises(SingleflightTimeoutError):
+                    await cache.aget_or_compute("policy", origin)
+                assert flight.async_waiters == {}
+                assert flight.future._done_callbacks == []
+                assert cache.metrics(operator=True)["resources"]["followers"] == 0
+        finally:
+            release.set()
+            assert await leader == "answer"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_close_callers_share_one_cleanup_worker():
+    cache = plain_cache()
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked(*_):
+        entered.set()
+        assert release.wait(5)
+        return PolicyDecision("accept")
+
+    cache._admit = blocked
+    write = asyncio.create_task(cache.aset("policy", "answer"))
+    assert await asyncio.to_thread(entered.wait, 5)
+    closers = [asyncio.create_task(cache.aclose()) for _ in range(50)]
+    # Each closer has started once the event-loop sentinel is reached.
+    sentinel = asyncio.Event()
+    asyncio.get_running_loop().call_soon(sentinel.set)
+    await sentinel.wait()
+    assert cache.metrics(operator=True)["resources"]["cleanup_workers"] == 1
+    for closer in closers[:-1]:
+        closer.cancel()
+    await asyncio.gather(*closers[:-1], return_exceptions=True)
+    release.set()
+    await write
+    await closers[-1]
+    assert cache._closed
+    assert cache.metrics(operator=True)["resources"]["cleanup_workers"] == 0
+
+
+@pytest.mark.asyncio
+async def test_joining_close_caller_can_use_a_shorter_wait_timeout():
+    cache = plain_cache()
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked(*_):
+        entered.set()
+        assert release.wait(5)
+        return PolicyDecision("accept")
+
+    cache._admit = blocked
+    write = asyncio.create_task(cache.aset("policy", "answer"))
+    assert await asyncio.to_thread(entered.wait, 5)
+    first = asyncio.create_task(cache.aclose(timeout=2))
+    sentinel = asyncio.Event()
+    asyncio.get_running_loop().call_soon(sentinel.set)
+    await sentinel.wait()
+    try:
+        with pytest.raises(CacheShutdownTimeoutError):
+            await cache.aclose(timeout=0.01)
+        assert not first.done()
+        assert cache.metrics(operator=True)["resources"]["cleanup_workers"] == 1
+    finally:
+        release.set()
+        await write
+        await first

@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+import asyncio
 import threading
 
 from .errors import SingleflightCapacityError, SingleflightInvalidatedError, CacheClosedError
@@ -22,6 +23,7 @@ class Flight:
     future: Future = field(default_factory=Future, repr=False)
     followers: int = 0
     retained_bytes: int = 0
+    async_waiters: dict = field(default_factory=dict, repr=False)
 
 
 class Singleflight:
@@ -67,8 +69,41 @@ class Singleflight:
                 self._retained += size
             if self._flights.get(flight.key) is flight:
                 del self._flights[flight.key]
-            # Futures are private: callbacks only bridge completion to waiting loops.
             flight.future.set_result(completion)
+            waiters = list(flight.async_waiters.items())
+            flight.async_waiters.clear()
+        self._notify(waiters, completion)
+
+    @staticmethod
+    def _notify(waiters, completion):
+        def deliver(waiter):
+            if not waiter.done():
+                waiter.set_result(completion)
+
+        for waiter, loop in waiters:
+            try:
+                loop.call_soon_threadsafe(deliver, waiter)
+            except RuntimeError:
+                pass  # The caller's loop has already closed.
+
+    async def wait(self, flight, timeout):
+        # wrap_future(shared_future) cannot remove its concurrent-future callback
+        # on timeout. Explicit detachable subscriptions keep churn bounded even
+        # when a leader runs indefinitely. Each local future belongs to one caller.
+        loop = asyncio.get_running_loop()
+        waiter = loop.create_future()
+        with self._lock:
+            if flight.future.done():
+                waiter.set_result(flight.future.result())
+            else:
+                flight.async_waiters[waiter] = loop
+        try:
+            return await asyncio.wait_for(waiter, timeout)
+        finally:
+            with self._lock:
+                flight.async_waiters.pop(waiter, None)
+            if not waiter.done():
+                waiter.cancel()
 
     def detach(self, flight):
         with self._lock:
@@ -89,9 +124,15 @@ class Singleflight:
                 self.epoch += 1
             flights = list(self._flights.values())
             self._flights.clear()
+            notifications = []
             for flight in flights:
                 if not flight.future.done():
-                    flight.future.set_result(Completion("invalidated", error=error))
+                    completion = Completion("invalidated", error=error)
+                    flight.future.set_result(completion)
+                    notifications.append((list(flight.async_waiters.items()), completion))
+                    flight.async_waiters.clear()
+        for waiters, completion in notifications:
+            self._notify(waiters, completion)
 
     def snapshot(self):
         with self._lock:
