@@ -19,6 +19,8 @@ from .embedder import LocalEmbedder
 from .entry import CacheEntry
 from .identity import Instruction, RequestContext, canonical, digest
 from .index import SimilarityIndex
+from .lifecycle import Lifecycle, managed
+from .errors import CacheClosedError
 from .policy import admit, decode_response, verify
 
 
@@ -60,6 +62,9 @@ class LongCache:
         self._embedding = EmbeddingGuard(self.embedder)
         self.backend = self._init_backend()
         self.index = SimilarityIndex(self.backend, self.config)
+        self._lifecycle = Lifecycle(
+            self._finalize_resources, self._revoke_flights, self.config.shutdown_timeout_seconds
+        )
         # Metadata-only construction does not load/download model weights.
         try:
             if self.backend.list_all_entries():
@@ -80,16 +85,21 @@ class LongCache:
         if c.backend == "memory":
             return InMemoryCacheBackend(c.max_entries)
         if c.backend == "sqlite":
-            return SQLiteCacheBackend(c.db_path, c.max_entries)
+            return SQLiteCacheBackend(c.db_path, c.max_entries, timeout=c.backend_timeout_seconds)
         if c.backend == "redis":
             from longcache.backends.redis import RedisCacheBackend
 
-            return RedisCacheBackend(c.redis_url, c.max_entries, c.cache_id, c.generation)
+            return RedisCacheBackend(
+                c.redis_url,
+                c.max_entries,
+                c.cache_id,
+                c.generation,
+                timeout=c.backend_timeout_seconds,
+            )
         raise ValueError("async_redis is not supported through LongCache; use a supported backend")
 
     def _ensure_open(self):
-        if self._closed:
-            raise RuntimeError("Cache is closed")
+        self._lifecycle.ensure_open()
 
     def _ensure_ready(self):
         with self._mutation_lock:
@@ -186,6 +196,7 @@ class LongCache:
             self._stats[outcome] += 1
             self._partition_stats.setdefault(partition, Counter())[outcome] += 1
 
+    @managed
     def lookup(
         self,
         query,
@@ -198,6 +209,7 @@ class LongCache:
         _inspect=False,
         _cancel=None,
     ):
+        _cancel = _cancel or self._lifecycle.current
         if self._metadata_only:
             raise ValueError("Vector operations require a normal cache instance")
         prepared, reason = self._prepare(
@@ -274,12 +286,7 @@ class LongCache:
         return LookupDecision("MISS", reason, similarity=last_score, threshold=threshold)
 
     async def _async(self, method, *args, **kwargs):
-        cancelled = threading.Event()
-        try:
-            return await asyncio.to_thread(method, *args, _cancel=cancelled, **kwargs)
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
+        return await self._lifecycle.call(method, *args, **kwargs)
 
     async def alookup(self, query, namespace=None, **kwargs):
         return await self._async(self.lookup, query, namespace, **kwargs)
@@ -326,6 +333,7 @@ class LongCache:
             )
         ).response
 
+    @managed
     def set(
         self,
         query,
@@ -340,6 +348,7 @@ class LongCache:
         context=None,
         _cancel=None,
     ):
+        _cancel = _cancel or self._lifecycle.current
         if self._metadata_only:
             raise ValueError("Vector operations require a normal cache instance")
         prepared, reason = self._prepare(
@@ -478,6 +487,7 @@ class LongCache:
     def inspect(self, query, namespace=None, *, context=None, **legacy):
         return self.lookup(query, namespace, context=context, _inspect=True, **legacy).inspection()
 
+    @managed
     def invalidate(self, namespace=None, *, context=None, **legacy):
         prepared, reason = self._prepare("maintenance", context, namespace, legacy)
         if reason:
@@ -487,6 +497,7 @@ class LongCache:
             self._rebuild_index_from_backend()
             return count
 
+    @managed
     def invalidate_by_tag(self, tag, namespace=None, *, context=None, **legacy):
         prepared, reason = self._prepare("maintenance", context, namespace, legacy)
         if reason:
@@ -496,6 +507,7 @@ class LongCache:
             self._rebuild_index_from_backend()
             return count
 
+    @managed
     def clear(self, *, operator=False):
         self._ensure_open()
         if not operator:
@@ -505,6 +517,7 @@ class LongCache:
             self.index.rebuild([])
             return count
 
+    @managed
     def entries(self, namespace=None, *, context=None, operator=False):
         self._ensure_open()
         with self._mutation_lock:
@@ -513,6 +526,7 @@ class LongCache:
             prepared, reason = self._prepare("maintenance", context, namespace, {})
             return [] if reason else self.backend.list_entries(prepared[1])
 
+    @managed
     def stats(self, *, context=None, namespace=None, operator=False):
         self._ensure_open()
         with self._mutation_lock:
@@ -540,27 +554,60 @@ class LongCache:
 
     def _sweep(self):
         while not self._stop_event.wait(60):
-            with self._mutation_lock:
-                if not self._closed and self.backend.sweep_expired() and self._ready:
-                    self._rebuild_index_from_backend()
-
-    def close(self):
-        with self._mutation_lock:
-            if self._closed:
+            try:
+                with self._lifecycle.operation(), self._mutation_lock:
+                    if self.backend.sweep_expired() and self._ready:
+                        self._rebuild_index_from_backend()
+            except CacheClosedError:
                 return
-            self._closed = True
-            self._stop_event.set()
-        if self._sweep_thread is not None:
-            self._sweep_thread.join(timeout=2)
+
+    def _revoke_flights(self):
+        if hasattr(self, "_execution"):
+            self._execution.shutdown()
+
+    def _finalize_resources(self):
+        if self._sweep_thread is not None and self._sweep_thread is not threading.current_thread():
+            self._sweep_thread.join()
         if hasattr(self.backend, "close"):
             self.backend.close()
+        self._closed = True
+
+    def close(self, timeout=None):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            if self._lifecycle.snapshot()["active_operations"]:
+                raise CacheClosedError("Use await cache.aclose() to drain active work")
+        self._stop_event.set()
+        self._lifecycle.close(timeout)
+
+    async def aclose(self, timeout=None):
+        self._stop_event.set()
+        await self._lifecycle.aclose(timeout)
 
     def __enter__(self):
         self._ensure_open()
         return self
 
-    def __exit__(self, *_):
-        self.close()
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            self.close()
+        except Exception:
+            if exc is None:
+                raise
+
+    async def __aenter__(self):
+        self._ensure_open()
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        try:
+            await self.aclose()
+        except Exception:
+            if exc is None:
+                raise
 
     def __repr__(self):
         return f"LongCache(backend={self.config.backend!r}, format=2)"
