@@ -25,6 +25,10 @@ def managed(function):
 class Operation:
     def __init__(self):
         self.cancelled = threading.Event()
+        try:
+            self.task = asyncio.current_task()
+        except RuntimeError:
+            self.task = None
 
     def is_set(self):
         return self.cancelled.is_set()
@@ -188,6 +192,11 @@ class Lifecycle:
                     raise CacheClosedError("Cache resource cleanup failed") from self._failure
                 return
         self._revoke()
+        for token in list(self._active):
+            if token.task is not None and not token.task.done():
+                loop = token.task.get_loop()
+                if not loop.is_closed():
+                    loop.call_soon_threadsafe(token.task.cancel)
         raise CacheShutdownTimeoutError("Cache cleanup is pending active operations")
 
     async def aclose(self, timeout=None):

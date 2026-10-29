@@ -24,6 +24,7 @@ from .errors import CacheClosedError
 from .errors import CacheOperationError
 from .observability import Observability
 from .reliability import dependency, decision_operation, operational
+from .execution import Execution
 from .policy import admit, decode_response, verify
 
 
@@ -56,6 +57,7 @@ class LongCache:
         self._partition_stats = {}
         self._closed = False
         self._coherent = True
+        self._epoch = 0
         self._background_failed = False
         self._observability = Observability(self.config.track_stats, self.config.backend)
         self._ready = False
@@ -71,6 +73,7 @@ class LongCache:
         self._lifecycle = Lifecycle(
             self._finalize_resources, self._revoke_flights, self.config.shutdown_timeout_seconds
         )
+        self._execution = Execution(self)
         # Metadata-only construction does not load/download model weights.
         try:
             if self._dependency("backend", self.backend.list_all_entries):
@@ -225,6 +228,7 @@ class LongCache:
         system_prompt=None,
         temperature=None,
         _inspect=False,
+        _record=True,
         _cancel=None,
     ):
         _cancel = _cancel or self._lifecycle.current
@@ -304,16 +308,25 @@ class LongCache:
                     continue
                 if _cancel is not None and _cancel.is_set():
                     return LookupDecision("BYPASS", "cancelled", threshold=threshold)
-                if not _inspect:
+                if not _inspect and _record:
                     try:
                         self._dependency("accounting", self.backend.update_hit_count, entry.id)
                     except CacheOperationError:
                         pass  # Optional persisted accounting cannot invalidate a verified hit.
                     self._account(partition, "hits")
-                return LookupDecision("HIT", "accepted", response, score, entry.id, threshold)
+                return LookupDecision(
+                    "HIT",
+                    "accepted",
+                    response,
+                    score,
+                    entry.id,
+                    threshold,
+                    _epoch=self._epoch,
+                    _expires_at=current.expires_at,
+                )
         if len(candidates) > self.config.verification_budget:
             reason = "verification_budget_exhausted"
-        if not _inspect:
+        if not _inspect and _record:
             with self._mutation_lock:
                 if _cancel is None or not _cancel.is_set():
                     self._account(partition, "misses")
@@ -382,8 +395,12 @@ class LongCache:
         *,
         context=None,
         _cancel=None,
+        _expected_epoch=None,
     ):
         _cancel = _cancel or self._lifecycle.current
+        if _expected_epoch is None:
+            with self._mutation_lock:
+                _expected_epoch = self._epoch
         if self._metadata_only:
             raise ValueError("Vector operations require a normal cache instance")
         prepared, reason = self._prepare(
@@ -403,6 +420,8 @@ class LongCache:
         )
         if decision.action != "accept":
             return StoreDecision("REJECTED", decision.reason)
+        if len(canonical(payload).encode("utf-8")) > self.config.max_capture_bytes:
+            return StoreDecision("REJECTED", "response_too_large")
         effective_ttl = self.config.ttl_seconds if ttl is None else ttl
         if type(effective_ttl) is not int or effective_ttl < 0:
             raise ValueError("TTL must be a nonnegative integer")
@@ -429,6 +448,8 @@ class LongCache:
         )
         with self._mutation_lock:
             self._ensure_open()
+            if _expected_epoch != self._epoch:
+                return StoreDecision("REJECTED", "invalidated")
             if _cancel is not None and _cancel.is_set():
                 return StoreDecision("REJECTED", "cancelled")
             try:
@@ -452,6 +473,50 @@ class LongCache:
 
     async def aset(self, query, response, namespace=None, **kwargs):
         return await self._async(self.set, query, response, namespace, **kwargs)
+
+    def get_or_compute(
+        self,
+        query,
+        compute,
+        *,
+        context=None,
+        namespace=None,
+        ttl=None,
+        tags=None,
+        _entry_point="manual",
+    ):
+        """Reuse a verified answer or coordinate one exact scoped computation."""
+        return self._execution.run(
+            query,
+            compute,
+            context=context,
+            namespace=namespace,
+            ttl=ttl,
+            tags=tags,
+            _entry_point=_entry_point,
+        )
+
+    async def aget_or_compute(
+        self,
+        query,
+        compute,
+        *,
+        context=None,
+        namespace=None,
+        ttl=None,
+        tags=None,
+        _entry_point="manual",
+    ):
+        """Async equivalent; followers await without occupying worker threads."""
+        return await self._execution.arun(
+            query,
+            compute,
+            context=context,
+            namespace=namespace,
+            ttl=ttl,
+            tags=tags,
+            _entry_point=_entry_point,
+        )
 
     def cached(
         self,
@@ -541,6 +606,8 @@ class LongCache:
             return 0
         with self._mutation_lock:
             try:
+                self._epoch += 1
+                self._execution.registry.abort()
                 count = self._dependency("store", self.backend.delete_namespace, prepared[1])
                 self._rebuild_index_from_backend()
                 return count
@@ -555,6 +622,8 @@ class LongCache:
             return 0
         with self._mutation_lock:
             try:
+                self._epoch += 1
+                self._execution.registry.abort()
                 count = self._dependency("store", self.backend.delete_by_tag, tag, prepared[1])
                 self._rebuild_index_from_backend()
                 return count
@@ -569,6 +638,8 @@ class LongCache:
             raise ValueError("Clearing all partitions requires explicit operator=True")
         with self._mutation_lock:
             try:
+                self._epoch += 1
+                self._execution.registry.abort()
                 count = self._dependency("store", self.backend.clear)
                 self._dependency("index", self.index.rebuild, [])
                 return count
@@ -638,7 +709,7 @@ class LongCache:
             raise ValueError("Process-wide metrics require operator=True")
         return {
             **self._observability.snapshot(),
-            "resources": self._lifecycle.snapshot(),
+            "resources": {**self._lifecycle.snapshot(), **self._execution.registry.snapshot()},
             "health": "degraded" if not self._coherent or self._background_failed else "healthy",
         }
 
