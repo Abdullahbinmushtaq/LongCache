@@ -45,6 +45,8 @@ See [reliability and upgrade guidance](docs/reliability.md), run the offline
 for local evidence and remaining release gates. Prometheus/OpenTelemetry and new
 schema/Pydantic caching are deferred.
 
+Before a final release, full controlled-host performance, hosted CI after your manual push, domain-representative evaluation, and release-candidate feedback must pass. Local tests do not replace those gates. See the [release checklist](docs/plans/v0.3.0-acceptance.md#release-readiness-checklist).
+
 ## Why LongCache?
 
 | Problem                                      | Solution                                                                                                     |
@@ -125,36 +127,23 @@ async def my_async_chain(query: str) -> str:
 
 ## How It Works
 
+```text
+Scoped request
+    |
+    +--> Verified cache hit --------------------------> Response
+    |
+    +--> Exact-flight coordination
+            |
+            +--> Leader: recheck cache, then call origin if needed
+            |             --> admit and store/share eligible result
+            |
+            +--> Followers: wait, validate and recheck --> Response
+
+Unsupported shape / missing identity --> Origin pass-through
+                                       (no cache access or flight)
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        Query Lifecycle                       │
-│                                                              │
-│  User Query                                                  │
-│       │                                                      │
-│       ▼                                                      │
-│  ┌───────────────────┐                                       │
-│  │   LocalEmbedder   │  BAAI/bge-small-en-v1.5 — no API     │
-│  │   (local model)   │  call, runs offline after download   │
-│  └────────┬──────────┘                                       │
-│           │ 384-dim vector                                   │
-│           ▼                                                  │
-│  ┌───────────────────┐    HIT (scope + policy verified)       │
-│  │  SimilarityIndex  │ ─────────────────────────────────▶   │
-│  │  FAISS + Backend  │         Return cached response        │
-│  └────────┬──────────┘                                       │
-│           │    MISS                                          │
-│           ▼                                                  │
-│  ┌───────────────────┐                                       │
-│  │  Full RAG Chain   │  Retrieval + LLM            │
-│  └────────┬──────────┘                                       │
-│           │                                                  │
-│           ▼                                                  │
-│  ┌───────────────────┐                                       │
-│  │   CacheWriter     │  Stores vector + response + TTL       │
-│  │                   │  + namespace + tags + context         │
-│  └───────────────────┘                                       │
-└──────────────────────────────────────────────────────────────┘
-```
+
+This is a conceptual view of supported shared execution. Initialized async calls join before the leader performs lookup; manual lookup/store and generic ASGI invocations do not automatically coalesce.
 
 1. **Intercept** — validate trusted scope and supported request shape before embedding
 2. **Embed** — the query is embedded locally with BGE-small (no embedding API call)
@@ -182,7 +171,14 @@ config = CacheConfig(
     backend="sqlite",  # "sqlite" | "redis" | "memory"
     db_path=".longcache/v2/cache.db",  # SQLite path (auto-creates parent dirs)
     redis_url="redis://localhost:6379/0",  # Redis connection URL
-    track_stats=True,  # Track process-local hit/miss counters
+    track_stats=True,  # Track process-local counters and histograms
+    singleflight_enabled=True,  # Share identical supported concurrent calls
+    singleflight_wait_timeout_seconds=30.0,  # Follower wait; not a provider deadline
+    singleflight_max_inflight=1024,
+    singleflight_max_waiters_per_key=256,
+    cache_error_policy="raise",  # "bypass" permits safe origin execution on runtime cache failures
+    backend_timeout_seconds=2.0,  # Per-I/O timeout
+    shutdown_timeout_seconds=5.0,  # Shutdown grace period
     faiss_index_type="flat",  # "flat" (exact) | "hnsw" (approximate, faster at scale)
     hnsw_m=32,  # HNSW connections per node
     hnsw_ef_search=64,  # HNSW search depth
@@ -244,20 +240,24 @@ cache = LongCache(config, context=context)
 - ✅ **Semantic Similarity Cache:** Finds paraphrase candidates, then checks scope and reuse policy before serving an answer.
 - ✅ **Local Embedding:** BAAI/bge-small-en-v1.5 runs on-device after its first download; latency depends on hardware.
 - ✅ **`@cache.cached` Decorator:** Scoped caching for query-only sync or async functions; additional arguments bypass
-- ✅ **`@cache.cached_stream` Decorator:** Preserves sync/async generator interfaces as pass-through; no cache reads or writes in v0.2
+- ✅ **`@cache.cached_stream` Decorator:** Preserves sync/async generator interfaces as pass-through; no cache reads or writes in v0.3
 - ✅ **Composite Cache Keys:** Full SHA-256 identity includes trusted scope, execution settings, versions, codec, policy, and embedding generation
 - ✅ **Tag-Based Invalidation:** Attach tags to entries at write time; invalidate by tag within the exact scoped execution context
 - ✅ **Per-Entry TTL:** Override TTL per `set()` call or decorator — supports never-expire (`ttl=0`) and short-lived entries
-- ✅ **LRU Eviction:** Configurable `max_entries` per semantic partition; oldest entries evicted when the limit is reached
+- ✅ **Oldest-Entry Eviction:** Configurable `max_entries` per semantic partition; oldest entries evicted when the limit is reached
 
 ### Reliability
 
-- ✅ **Thread-Safe Statistics:** Hit/miss counts protected by a dedicated lock; safe under 8+ concurrent threads
+- ✅ **Sync/Async Singleflight:** Exact scoped requests share an execution through `get_or_compute` / `aget_or_compute`, supported decorators, and OpenAI.
+- ✅ **Explicit Failure Policy:** Strict by default; opt-in bypass never reuses an unverified response or retries the origin after a failed write.
+- ✅ **Owned Shutdown:** Bounded workers, tracked cancellation, `close`/`aclose`, and sync/async context managers.
+- ✅ **Private Decision Metrics:** Redacted structured events, bounded histograms/counters, and separate cache-hit/shared-result accounting.
+- ✅ **Thread-Safe Statistics:** Cache mutations protect hit/miss counts; metrics use bounded, separately synchronized snapshots
 - ✅ **Accepted-Hit Accounting:** Process counters reset on restart; stored entry hit counts persist, and unmeasured savings remain zero
 - ✅ **Rebuild-Safe FAISS Index:** Index is fully rebuilt after TTL sweeps or evictions — prevents stale vector accumulation
-- ✅ **Background TTL Sweeper:** Daemon thread runs every 5 minutes to delete expired entries; stops when the cache is closed
+- ✅ **Background TTL Sweeper:** Supported backends are checked every 60 seconds; transient failures use bounded retries, and shutdown stops the sweeper
 - ✅ **Correct Miss Counting:** Supported eligible lookups count hits only after successful verification and decoding
-- ✅ **Config Validation:** `CacheConfig` validates all fields on construction with clear error messages
+- ✅ **Config Validation:** Unknown dictionary keys and invalid reliability settings are rejected
 
 ### Integrations & Backends
 
@@ -266,7 +266,7 @@ cache = LongCache(config, context=context)
 - ✅ **Async Redis Backend:** Experimental standalone storage interface; unsupported through `LongCache`
 - ✅ **In-Memory Backend:** Zero I/O, ideal for unit tests and CI/CD pipelines
 - ✅ **LangChain Integration:** `CachedLLM` and `CachedChain` compatibility wrappers; pass-through in v0.3
-- ✅ **LangGraph Integration:** `CachedState` compatibility interface; graph state is not cached in v0.2
+- ✅ **LangGraph Integration:** `CachedState` compatibility interface; graph state is not cached in v0.3
 - ✅ **LlamaIndex Integration:** `CachedQueryEngine` preserves the engine interface without caching opaque state
 - ✅ **OpenAI Integration:** Supported single-turn text requests with explicit context; sync/async dict and SDK replay
 - ✅ **FastAPI Middleware:** Bounded supported chat-completion JSON with trusted scope resolution and diagnostic headers
@@ -335,7 +335,7 @@ cache = LongCache(CacheConfig(backend="memory"))
 
 ## Integrations
 
-**v0.2 support:** generic LangChain, LangGraph, and LlamaIndex adapters below preserve their interfaces but bypass cache reads/writes. Use the explicit-context manual/decorator path for caching proven application workflows. All streaming helpers also pass through.
+**v0.3 support:** generic LangChain, LangGraph, and LlamaIndex adapters below preserve their interfaces but bypass cache reads/writes. Use the explicit-context manual/decorator path for caching proven application workflows. All streaming helpers also pass through.
 
 ### LangChain
 
@@ -489,7 +489,7 @@ adapter = StreamingCacheAdapter(cache, my_stream)
 for token in adapter.stream("What is RAG?"):
     print(token, end="")
 
-# Repeated calls also reach the LLM; streaming replay is unsupported in v0.2
+# Repeated calls also reach the LLM; streaming replay is unsupported in v0.3
 for token in adapter.stream("What is RAG?"):
     print(token, end="")
 ```
@@ -531,6 +531,8 @@ Main facade class. Accepts an optional `CacheConfig` and explicit request contex
 
 | Method                                                                         | Description                                                                           |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `get_or_compute(query, compute, ..., context=...)`, `aget_or_compute(...)` | Shared execution of exact scoped requests; returns the supported response type. |
+| `metrics(operator=True)` | Redacted process-wide in-memory snapshot, available after close. |
 | `lookup(query, ..., context=...)`, `alookup(...)`                          | Typed `HIT` / `MISS` / `BYPASS` decision with reason and decoded response.      |
 | `get(query, ..., context=...)`, `aget(...)`                                | Decoded response or `None`; same lookup policy.                                     |
 | `set(query, response, ..., context=...)`, `aset(...)`                      | `StoreDecision` with `STORED` / `REJECTED`; strict admission and serialization. |
@@ -540,7 +542,7 @@ Main facade class. Accepts an optional `CacheConfig` and explicit request contex
 | `clear(operator=True)`                                                       | Explicit whole-store clearing.                                                        |
 | `stats(context=...)`                                                         | Scoped process counters and stored-entry count.                                       |
 | `inspect(query, ..., context=...)`                                           | Redacted decision/score dictionary without hit accounting.                            |
-| `close()` / context manager                                                  | Release owned background work and backend resources.                                  |
+| `close(timeout=None)` / `aclose(timeout=None)` / sync and async context managers                                                  | Release owned background work and backend resources.                                  |
 
 #### `@cache.cached` Decorator Options
 
@@ -554,7 +556,7 @@ Main facade class. Accepts an optional `CacheConfig` and explicit request contex
 def my_chain(query: str) -> str: ...
 ```
 
-Use a per-call `context_resolver` when trusted identity varies. For matching inspection/invalidation, derive the decorator context with `my_chain.cache_context_for(context)`. Streaming decorators do not cache in v0.2.
+Use a per-call `context_resolver` when trusted identity varies. For matching inspection/invalidation, derive the decorator context with `my_chain.cache_context_for(context)`. Streaming decorators do not cache in v0.3.
 
 #### `stats()` Return Value
 
@@ -570,7 +572,7 @@ Use a per-call `context_resolver` when trusted identity varies. For matching ins
 }
 ```
 
-Process hit/miss counters reset on restart; stored entry hit counts persist. Unmeasured timing/token/cost savings remain zero.
+Process hit/miss counters reset on restart; stored entry hit counts persist. Scoped statistics retain at most 1,024 partition records and expose `stats_window_started_at` / `stats_retention_evictions`; aggregate process totals remain exact. Unmeasured timing/token/cost savings remain zero.
 
 ---
 
@@ -587,6 +589,13 @@ Process hit/miss counters reset on restart; stored entry hit counts persist. Unm
 | `db_path`                  | `str`   | `".longcache/v2/cache.db"`   | SQLite database path                                                                |
 | `redis_url`                | `str`   | `"redis://localhost:6379/0"` | Redis connection URL                                                                |
 | `track_stats`              | `bool`  | `True`                       | Track process-local hit/miss counters                                               |
+| `singleflight_enabled` | `bool` | `True` | Share exact scoped requests through supported execution paths |
+| `singleflight_wait_timeout_seconds` | `float` | `30.0` | Follower wait timeout; does not cancel the leader |
+| `singleflight_max_inflight` | `int` | `1024` | Active flight keys per instance |
+| `singleflight_max_waiters_per_key` | `int` | `256` | Followers allowed per key |
+| `cache_error_policy` | `str` | `"raise"` | `"raise"` or opt-in `"bypass"` for recognized runtime cache failures |
+| `backend_timeout_seconds` | `float` | `2.0` | SQLite busy / Redis connect and socket deadlines per I/O |
+| `shutdown_timeout_seconds` | `float` | `5.0` | Default shutdown grace period |
 | `faiss_index_type`         | `str`   | `"flat"`                     | `"flat"` (exact) or `"hnsw"` (approximate)                                      |
 | `hnsw_m`                   | `int`   | `32`                         | HNSW connections per node (higher = more accurate, more memory)                     |
 | `hnsw_ef_search`           | `int`   | `64`                         | HNSW search depth (higher = more accurate, slower)                                  |
@@ -608,7 +617,7 @@ Used internally by backends and available through scoped `entries(context=...)`.
 | `id`            | `int \| None`   | Backend-assigned unique identifier              |
 | `namespace`     | `str`          | Canonical scoped execution partition            |
 | `query`         | `str`          | Original query text                             |
-| `vector`        | `np.ndarray`   | 384-dim L2-normalized float32 embedding         |
+| `vector`        | `np.ndarray`   | Configured-dimension L2-normalized float32 embedding         |
 | `response`      | `Any`          | Cached LLM response (must be JSON-serializable) |
 | `created_at`    | `float`        | Unix timestamp of entry creation                |
 | `expires_at`    | `float \| None` | Unix timestamp of expiry (`None` = no expiry) |
@@ -652,6 +661,8 @@ cache.clear(operator=True)
 
 ### Async Manual Control
 
+This lookup/call/store pattern gives explicit decision control; it does not coalesce concurrent origin calls. Use `await cache.aget_or_compute(query, lambda: my_pipeline(query), context=context)` when shared execution is needed.
+
 ```python
 cached = await cache.aget("What is your refund policy?", context=context)
 if cached is None:
@@ -659,7 +670,7 @@ if cached is None:
     await cache.aset("What is your refund policy?", result, tags=["policy"], context=context)
 ```
 
-### HNSW Index for Large Caches (100K+ Entries)
+### HNSW Configuration
 
 ```python
 cache = LongCache(
@@ -682,7 +693,7 @@ decision = cache.inspect("refund policy", context=context)
 
 ### Custom Integration: Decision-Based Control
 
-Hit accounting is automatic; `record_hit`, `record_miss`, and `track_miss` were removed in v0.2.
+Hit accounting is automatic; `record_hit` and `record_miss` were removed in v0.2. The legacy `track_miss` argument remains accepted by `get`/`aget` but does not control accounting.
 
 ```python
 def answer(query):
@@ -702,20 +713,31 @@ def answer(query):
 
 ```
 src/longcache/
-├── __init__.py              # Public API: LongCache, CacheConfig
+├── __init__.py              # Public cache, identity, policy, embedder, and error exports
 ├── config.py                # CacheConfig dataclass + from_dict/from_env
 ├── cli.py                   # CLI: stats, clear, inspect, export
 ├── middleware.py             # FastAPI/Starlette ASGI middleware + StreamingCacheAdapter
 ├── core/
 │   ├── entry.py             # CacheEntry dataclass (query, vector, response, tags, context)
+│   ├── decision.py          # Typed lookup/store and policy results
+│   ├── base_embedder.py     # Injectable embedding interface
+│   ├── embedding_contract.py # Descriptor, vector validation, and generation guard
 │   ├── embedder.py          # LocalEmbedder — BGE-small singleton, lazy-loaded
 │   ├── index.py             # SimilarityIndex — FAISS Flat/HNSW, rebuild-safe
-│   └── cache.py             # LongCache — main orchestrator, thread-safe stats
+│   ├── identity.py          # Immutable context and exact/semantic identity
+│   ├── policy.py            # Admission, verification, and response codecs
+│   ├── execution.py         # Shared sync/async execution protocol
+│   ├── singleflight.py      # Bounded flights and detachable async waits
+│   ├── lifecycle.py         # Worker ownership, cancellation, and cleanup
+│   ├── reliability.py       # Runtime error policy and decision accounting
+│   ├── observability.py     # Redacted events and bounded measurements
+│   ├── errors.py            # Public reliability exceptions
+│   └── cache.py             # Public cache facade and scoped maintenance
 ├── backends/
 │   ├── base.py              # AbstractCacheBackend ABC
-│   ├── sqlite.py            # SQLiteCacheBackend — WAL mode, tag table, stats persistence
+│   ├── sqlite.py            # SQLiteCacheBackend — owned connection, WAL, format-2 metadata
 │   ├── redis.py             # RedisCacheBackend — sync, tag support, atomic TTL
-│   ├── async_redis.py       # AsyncRedisCacheBackend — async, non-blocking
+│   ├── async_redis.py       # AsyncRedisCacheBackend — standalone experimental adapter
 │   └── memory.py            # InMemoryCacheBackend — testing, zero I/O
 └── integrations/
     ├── langchain.py         # CachedLLM, CachedChain
@@ -730,7 +752,7 @@ LongCache uses **BAAI/bge-small-en-v1.5** by default:
 
 - **384-dimensional** vectors — compact and fast
 - Local embedding after the model is downloaded; measure latency on your hardware
-- **Fully offline** after initial weight download — no API calls ever
+- Local inference can run offline with cached weights; no external embedding API is required
 - **L2-normalized** — inner product equals cosine similarity in FAISS
 - **Singleton pattern** — the model is loaded once and reused across all instances
 
@@ -738,21 +760,22 @@ LongCache uses **BAAI/bge-small-en-v1.5** by default:
 
 | Index             | Config Value | Characteristics                                                 |
 | ----------------- | ------------ | --------------------------------------------------------------- |
-| `IndexFlatIP`   | `"flat"`   | Exact search, deterministic, best for ≤ 100K entries           |
-| `IndexHNSWFlat` | `"hnsw"`   | Approximate search, sub-ms at any scale, best for 100K+ entries |
+| `IndexFlatIP`   | `"flat"`   | Exact search; measure latency and memory at your cache size           |
+| `IndexHNSWFlat` | `"hnsw"`   | Approximate search; measure recall, latency, and memory on your workload |
 
 After TTL sweeps, namespace invalidations, or evictions, the local FAISS index is rebuilt from live backend entries. Redis storage alone does not synchronize indexes between processes.
 
 ### Thread Safety
 
-- **Stats** (`hits`, `misses`, `total_saved_ms`) are protected by a dedicated `threading.Lock()`.
-- **SQLite backend** uses WAL mode and a per-connection `threading.RLock()`.
-- **The TTL sweeper** runs as a daemon thread and signals shutdown cleanly via `threading.Event`.
-- **`get()`/`aget()`** correctly record misses in a thread-safe manner.
+- Cache mutations and hit/miss accounting use the mutation lock; bounded metrics have a separate lock.
+- SQLite owns one connection and serializes access with its backend `RLock`.
+- Async cache work uses four workers with at most 64 queued/running jobs; cancellation stays tracked until dequeue/completion.
+- Sync and async callers coordinate through the same per-instance flight registry. Timed-out async subscriptions are removed.
+- Shutdown drains resource owners before closing connections. See [reliability](docs/reliability.md) for timeouts and cancellation limits.
 
 ### Background TTL Sweeper
 
-A daemon thread checks for expired entries every 5 minutes when `ttl_seconds > 0`. Call `cache.close()` or use `with LongCache(...) as cache:` to stop it and release backend connections.
+When TTL cleanup is enabled and the backend provides `sweep_expired`, a daemon checks every 60 seconds. Recognized transient failures retry after 1, 2, 4, up to 60 seconds. Redis uses its storage TTL; memory checks expiry during retrieval. Use `close()` / `with` in sync applications or `await aclose()` / `async with` in async applications to drain owned work and release resources.
 
 ### Persistent Statistics
 
