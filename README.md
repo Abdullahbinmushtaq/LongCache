@@ -40,7 +40,7 @@ tracked cancellation and shutdown, and private bounded decision metrics. Format-
 stores remain compatible. Scope, admission, verification, and supported-shape rules
 remain mandatory. Redis-backed caches still support one instance/process per index.
 
-See [reliability and upgrade guidance](docs/reliability.md), run the offline
+See [reliability](docs/reliability.md) and the [v0.2 → v0.3 upgrade guide](docs/migration-v0.3.md), run the offline
 `python examples/reliability.py`, and inspect the [v0.3 execution record](docs/plans/v0.3.0-execution.md)
 for local evidence and remaining release gates. Prometheus/OpenTelemetry and new
 schema/Pydantic caching are deferred.
@@ -77,6 +77,14 @@ uv pip install longcache[redis]
 
 # Everything
 uv pip install longcache[all]
+```
+
+To try unreleased v0.3.0, check out the v0.3 development branch and install from
+the repository directory containing `pyproject.toml`:
+
+```bash
+uv pip install -e "."
+# Include extras as needed, for example: uv pip install -e ".[openai,redis]"
 ```
 
 > **Offline-friendly**: LongCache embeds queries locally. After the BGE-small model weights are downloaded on first run, no internet connection is required.
@@ -122,6 +130,26 @@ Async functions are detected automatically and use the same explicit context:
 async def my_async_chain(query: str) -> str:
     return await async_llm_call(query)
 ```
+
+### Resource Cleanup and Shared Execution
+
+The examples above use a long-lived cache. Close it at application shutdown with
+`cache.close()` in sync code or `await cache.aclose()` in async code. For a bounded
+lifetime, use a context manager:
+
+```python
+with LongCache(context=context) as cache:
+    answer = cache.get_or_compute(query, lambda: expensive_llm_call(query))
+
+# Inside an async function:
+async with LongCache(context=context) as cache:
+    answer = await cache.aget_or_compute(query, lambda: async_llm_call(query))
+```
+
+Keep the same cache instance for requests that should share work. Only exact
+scoped requests with matching TTL and tags join a flight. A follower timeout does
+not cancel the leader; configure provider timeouts separately. Provider clients
+and other borrowed resources remain application-owned.
 
 ---
 
@@ -457,10 +485,11 @@ from fastapi import FastAPI
 from longcache import LongCache
 from longcache.middleware import LongCacheMiddleware
 
+cache = LongCache()
 app = FastAPI()
 app.add_middleware(
     LongCacheMiddleware,
-    cache=LongCache(),
+    cache=cache,
     context=context,  # Execution template from the quick start
     scope_resolver=lambda scope: scope["state"]["request_scope"],
     cached_routes={"/v1/chat/completions"},
@@ -471,6 +500,11 @@ app.add_middleware(
 # X-LongCache: HIT  →  cached response served
 # X-LongCache: MISS/BYPASS → upstream response; admission is checked afterward
 ```
+
+The supplied cache is application-owned: retain a reference and call
+`await cache.aclose()` from the FastAPI lifespan shutdown handler. Middleware
+cache lookup/storage does not coalesce downstream HTTP invocations. See the
+[FastAPI guide](docs/integrations/fastapi.md) for ownership and failure behavior.
 
 ### Streaming Cache Adapter
 
@@ -856,10 +890,10 @@ longcache/
 | Extra            | Package(s)                                                       | Purpose                      |
 | ---------------- | ---------------------------------------------------------------- | ---------------------------- |
 | `[redis]`      | `redis>=5.0.0,<6.0.0`                                          | Redis & async Redis backends |
-| `[langchain]`  | `langchain-core>=1.0.0`, `langgraph>=1.0.0`                  | LangChain + LangGraph        |
-| `[llamaindex]` | `llama-index-core>=0.10.0`                                     | LlamaIndex integration       |
+| `[langchain]`  | `langchain-core>=1.0.0,<2.0.0`, `langgraph>=1.0.0,<2.0.0`       | LangChain + LangGraph        |
+| `[llamaindex]` | `llama-index-core>=0.10.0,<1.0.0`                              | LlamaIndex integration       |
 | `[openai]`     | `openai>=1.0.0,<2.0.0`                                         | Direct OpenAI integration    |
-| `[server]`     | `fastapi>=0.109.0`, `starlette>=0.36.0`, `uvicorn>=0.27.0` | ASGI middleware              |
+| `[server]`     | `fastapi>=0.109.0,<1.0.0`, `starlette>=0.36.0,<1.0.0`, `uvicorn>=0.27.0,<1.0.0` | ASGI middleware |
 | `[all]`        | All of the above                                                 | Everything                   |
 
 ### Development
@@ -870,31 +904,45 @@ longcache/
 | `pytest-asyncio` | `>=0.23.0` | Async test support |
 | `pytest-cov`     | `>=5.0.0`  | Coverage reporting |
 | `httpx`          | `>=0.27.0` | ASGI test client   |
-| `ruff`           | `>=0.4.0`  | Linter / formatter |
+| `ruff`           | `==0.17.3` | Linter / formatter |
 
 ---
 
 ## Running Tests
 
 ```bash
-# Install in editable mode with dev dependencies
-uv pip install -e ".[dev]"
+# Install in editable mode with test and integration dependencies
+uv sync --frozen --extra dev --extra all
 
-# Run all tests
-uv run pytest
+# Run tests and show skips (real-model/Redis cases need the setup below)
+uv run --no-sync pytest -q -rs
 
 # Run with coverage report
-uv run pytest --cov=longcache --cov-report=term-missing
+uv run --no-sync pytest --cov=longcache --cov-report=term-missing
 
 # Run a specific test file
-uv run pytest tests/test_cache.py
+uv run --no-sync pytest tests/test_cache.py
 
 # Verbose output
-uv run pytest -v
+uv run --no-sync pytest -v
 
 # Optional real-model tests (downloads model weights on first run)
-LONGCACHE_TEST_MODEL=1 uv run pytest tests/test_embedder.py -q
+LONGCACHE_TEST_MODEL=1 uv run --no-sync pytest tests/test_embedder.py -q
 ```
+
+For the full supported matrix, run on both Python 3.11 and 3.12 with a dedicated
+test Redis instance and available BGE-small model weights:
+
+```bash
+LONGCACHE_TEST_REDIS_URL=redis://localhost:16379/0 LONGCACHE_TEST_MODEL=1 \
+    uv run --no-sync pytest -q -rs
+```
+
+Skipped backend/model cases do not establish full matrix coverage. The recorded
+v0.3 installed-wheel runs passed **457 tests per interpreter with zero skips**;
+see the [execution record](docs/plans/v0.3.0-execution.md). Full performance
+qualification and the other [release gates](docs/plans/v0.3.0-acceptance.md#release-readiness-checklist)
+remain separate from these tests.
 
 ---
 
