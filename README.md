@@ -21,31 +21,9 @@
 <a href="https://github.com/ENDEVSOLS/LongCache/blob/main/CHANGELOG.md"><strong>Changelog</strong></a>
 </p>
 
-**v0.3.0 is unreleased.** This checkout adds single-process reliability; package-index commands install the currently published release.
-
 **LongCache** reuses stored responses when trusted scope, execution context, response admission, and verification permit reuse. Python 3.11 and 3.12 are tested; v0.1.1 remains the Python 3.10-compatible line. Measure response quality, latency, and savings on your own workload.
 
 ---
-
-## Reliability in v0.3.0
-
-Use `cache.get_or_compute(query, lambda: call_provider(query), context=context)` or
-`await cache.aget_or_compute(query, lambda: async_call_provider(query), context=context)`
-to share one execution among identical concurrent requests. Supported query-only
-decorators and OpenAI wrappers use the same coordination. Separate manual lookup and
-store calls do not coalesce the intervening computation.
-
-The release adds explicit strict/bypass cache-error policies, finite backend I/O,
-tracked cancellation and shutdown, and private bounded decision metrics. Format-2
-stores remain compatible. Scope, admission, verification, and supported-shape rules
-remain mandatory. Redis-backed caches still support one instance/process per index.
-
-See [reliability](docs/reliability.md) and the [v0.2 → v0.3 upgrade guide](docs/migration-v0.3.md), run the offline
-`python examples/reliability.py`, and inspect the [v0.3 execution record](docs/plans/v0.3.0-execution.md)
-for local evidence and remaining release gates. Prometheus/OpenTelemetry and new
-schema/Pydantic caching are deferred.
-
-Before a final release, full controlled-host performance, hosted CI after your manual push, domain-representative evaluation, and release-candidate feedback must pass. Local tests do not replace those gates. See the [release checklist](docs/plans/v0.3.0-acceptance.md#release-readiness-checklist).
 
 ## Why LongCache?
 
@@ -79,7 +57,7 @@ uv pip install longcache[redis]
 uv pip install longcache[all]
 ```
 
-To try unreleased v0.3.0, check out the v0.3 development branch and install from
+To try  v0.3.0, check out the v0.3 development branch and install from
 the repository directory containing `pyproject.toml`:
 
 ```bash
@@ -563,20 +541,20 @@ Main facade class. Accepts an optional `CacheConfig` and explicit request contex
 
 #### Core Methods
 
-| Method                                                                         | Description                                                                           |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| `get_or_compute(query, compute, ..., context=...)`, `aget_or_compute(...)` | Shared execution of exact scoped requests; returns the supported response type. |
-| `metrics(operator=True)` | Redacted process-wide in-memory snapshot, available after close. |
-| `lookup(query, ..., context=...)`, `alookup(...)`                          | Typed `HIT` / `MISS` / `BYPASS` decision with reason and decoded response.      |
-| `get(query, ..., context=...)`, `aget(...)`                                | Decoded response or `None`; same lookup policy.                                     |
-| `set(query, response, ..., context=...)`, `aset(...)`                      | `StoreDecision` with `STORED` / `REJECTED`; strict admission and serialization. |
-| `cached(..., context=..., context_resolver=...)`                             | Query-only sync/async decorator; extra arguments bypass.                              |
-| `cached_stream(...)`                                                         | Sync/async generator pass-through; no caching.                                        |
-| `invalidate(..., context=...)`, `invalidate_by_tag(tag, ..., context=...)` | Delete only within the exact scoped execution context.                                |
-| `clear(operator=True)`                                                       | Explicit whole-store clearing.                                                        |
-| `stats(context=...)`                                                         | Scoped process counters and stored-entry count.                                       |
-| `inspect(query, ..., context=...)`                                           | Redacted decision/score dictionary without hit accounting.                            |
-| `close(timeout=None)` / `aclose(timeout=None)` / sync and async context managers                                                  | Release owned background work and backend resources.                                  |
+| Method                                                                               | Description                                                                           |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `get_or_compute(query, compute, ..., context=...)`, `aget_or_compute(...)`       | Shared execution of exact scoped requests; returns the supported response type.       |
+| `metrics(operator=True)`                                                           | Redacted process-wide in-memory snapshot, available after close.                      |
+| `lookup(query, ..., context=...)`, `alookup(...)`                                | Typed `HIT` / `MISS` / `BYPASS` decision with reason and decoded response.      |
+| `get(query, ..., context=...)`, `aget(...)`                                      | Decoded response or `None`; same lookup policy.                                     |
+| `set(query, response, ..., context=...)`, `aset(...)`                            | `StoreDecision` with `STORED` / `REJECTED`; strict admission and serialization. |
+| `cached(..., context=..., context_resolver=...)`                                   | Query-only sync/async decorator; extra arguments bypass.                              |
+| `cached_stream(...)`                                                               | Sync/async generator pass-through; no caching.                                        |
+| `invalidate(..., context=...)`, `invalidate_by_tag(tag, ..., context=...)`       | Delete only within the exact scoped execution context.                                |
+| `clear(operator=True)`                                                             | Explicit whole-store clearing.                                                        |
+| `stats(context=...)`                                                               | Scoped process counters and stored-entry count.                                       |
+| `inspect(query, ..., context=...)`                                                 | Redacted decision/score dictionary without hit accounting.                            |
+| `close(timeout=None)` / `aclose(timeout=None)` / sync and async context managers | Release owned background work and backend resources.                                  |
 
 #### `@cache.cached` Decorator Options
 
@@ -612,33 +590,33 @@ Process hit/miss counters reset on restart; stored entry hit counts persist. Sco
 
 ### `CacheConfig` Field Reference
 
-| Field                        | Type      | Default                        | Description                                                                         |
-| ---------------------------- | --------- | ------------------------------ | ----------------------------------------------------------------------------------- |
-| `similarity_threshold`     | `float` | `0.92`                       | Cosine similarity threshold for cache hits (0.0–1.0)                               |
-| `ttl_seconds`              | `int`   | `3600`                       | Entry lifetime in seconds. `0` = never expire                                     |
-| `max_entries`              | `int`   | `10_000`                     | Max entries per semantic partition; oldest entries evicted first                    |
-| `namespace`                | `str`   | `"default"`                  | Default namespace                                                                   |
-| `embedder_model`           | `str`   | `"BAAI/bge-small-en-v1.5"`   | Local sentence-transformers model                                                   |
-| `backend`                  | `str`   | `"sqlite"`                   | `"sqlite"`, `"redis"`, `"memory"` through `LongCache`                       |
-| `db_path`                  | `str`   | `".longcache/v2/cache.db"`   | SQLite database path                                                                |
-| `redis_url`                | `str`   | `"redis://localhost:6379/0"` | Redis connection URL                                                                |
-| `track_stats`              | `bool`  | `True`                       | Track process-local hit/miss counters                                               |
-| `singleflight_enabled` | `bool` | `True` | Share exact scoped requests through supported execution paths |
-| `singleflight_wait_timeout_seconds` | `float` | `30.0` | Follower wait timeout; does not cancel the leader |
-| `singleflight_max_inflight` | `int` | `1024` | Active flight keys per instance |
-| `singleflight_max_waiters_per_key` | `int` | `256` | Followers allowed per key |
-| `cache_error_policy` | `str` | `"raise"` | `"raise"` or opt-in `"bypass"` for recognized runtime cache failures |
-| `backend_timeout_seconds` | `float` | `2.0` | SQLite busy / Redis connect and socket deadlines per I/O |
-| `shutdown_timeout_seconds` | `float` | `5.0` | Default shutdown grace period |
-| `faiss_index_type`         | `str`   | `"flat"`                     | `"flat"` (exact) or `"hnsw"` (approximate)                                      |
-| `hnsw_m`                   | `int`   | `32`                         | HNSW connections per node (higher = more accurate, more memory)                     |
-| `hnsw_ef_search`           | `int`   | `64`                         | HNSW search depth (higher = more accurate, slower)                                  |
-| `scope_policy`             | `str`   | `"private"`                  | Trusted tenant/user scope; `tenant_shared` and `public` require explicit opt-in |
-| `cache_id`, `generation` | `str`   | `"default"`                  | Owned Redis keyspace and storage generation                                         |
-| `verification_budget`      | `int`   | `8`                          | Maximum candidates checked per lookup                                               |
-| `model`                    | `str`   | `""`                         | Legacy execution field; does not replace trusted context                            |
-| `system_prompt`            | `str`   | `""`                         | Global system prompt for composite key scoping                                      |
-| `temperature`              | `float` | `-1.0`                       | Global temperature for composite key scoping (`-1.0` = unset)                     |
+| Field                                 | Type      | Default                        | Description                                                                         |
+| ------------------------------------- | --------- | ------------------------------ | ----------------------------------------------------------------------------------- |
+| `similarity_threshold`              | `float` | `0.92`                       | Cosine similarity threshold for cache hits (0.0–1.0)                               |
+| `ttl_seconds`                       | `int`   | `3600`                       | Entry lifetime in seconds. `0` = never expire                                     |
+| `max_entries`                       | `int`   | `10_000`                     | Max entries per semantic partition; oldest entries evicted first                    |
+| `namespace`                         | `str`   | `"default"`                  | Default namespace                                                                   |
+| `embedder_model`                    | `str`   | `"BAAI/bge-small-en-v1.5"`   | Local sentence-transformers model                                                   |
+| `backend`                           | `str`   | `"sqlite"`                   | `"sqlite"`, `"redis"`, `"memory"` through `LongCache`                       |
+| `db_path`                           | `str`   | `".longcache/v2/cache.db"`   | SQLite database path                                                                |
+| `redis_url`                         | `str`   | `"redis://localhost:6379/0"` | Redis connection URL                                                                |
+| `track_stats`                       | `bool`  | `True`                       | Track process-local hit/miss counters                                               |
+| `singleflight_enabled`              | `bool`  | `True`                       | Share exact scoped requests through supported execution paths                       |
+| `singleflight_wait_timeout_seconds` | `float` | `30.0`                       | Follower wait timeout; does not cancel the leader                                   |
+| `singleflight_max_inflight`         | `int`   | `1024`                       | Active flight keys per instance                                                     |
+| `singleflight_max_waiters_per_key`  | `int`   | `256`                        | Followers allowed per key                                                           |
+| `cache_error_policy`                | `str`   | `"raise"`                    | `"raise"` or opt-in `"bypass"` for recognized runtime cache failures            |
+| `backend_timeout_seconds`           | `float` | `2.0`                        | SQLite busy / Redis connect and socket deadlines per I/O                            |
+| `shutdown_timeout_seconds`          | `float` | `5.0`                        | Default shutdown grace period                                                       |
+| `faiss_index_type`                  | `str`   | `"flat"`                     | `"flat"` (exact) or `"hnsw"` (approximate)                                      |
+| `hnsw_m`                            | `int`   | `32`                         | HNSW connections per node (higher = more accurate, more memory)                     |
+| `hnsw_ef_search`                    | `int`   | `64`                         | HNSW search depth (higher = more accurate, slower)                                  |
+| `scope_policy`                      | `str`   | `"private"`                  | Trusted tenant/user scope; `tenant_shared` and `public` require explicit opt-in |
+| `cache_id`, `generation`          | `str`   | `"default"`                  | Owned Redis keyspace and storage generation                                         |
+| `verification_budget`               | `int`   | `8`                          | Maximum candidates checked per lookup                                               |
+| `model`                             | `str`   | `""`                         | Legacy execution field; does not replace trusted context                            |
+| `system_prompt`                     | `str`   | `""`                         | Global system prompt for composite key scoping                                      |
+| `temperature`                       | `float` | `-1.0`                       | Global temperature for composite key scoping (`-1.0` = unset)                     |
 
 ---
 
@@ -646,20 +624,20 @@ Process hit/miss counters reset on restart; stored entry hit counts persist. Sco
 
 Used internally by backends and available through scoped `entries(context=...)`. `inspect()` returns a redacted decision dictionary, not a `CacheEntry`.
 
-| Field             | Type             | Description                                     |
-| ----------------- | ---------------- | ----------------------------------------------- |
-| `id`            | `int \| None`   | Backend-assigned unique identifier              |
-| `namespace`     | `str`          | Canonical scoped execution partition            |
-| `query`         | `str`          | Original query text                             |
-| `vector`        | `np.ndarray`   | Configured-dimension L2-normalized float32 embedding         |
-| `response`      | `Any`          | Cached LLM response (must be JSON-serializable) |
-| `created_at`    | `float`        | Unix timestamp of entry creation                |
-| `expires_at`    | `float \| None` | Unix timestamp of expiry (`None` = no expiry) |
-| `hit_count`     | `int`          | Number of times this entry has been served      |
-| `model`         | `str`          | Model identifier at write time                  |
-| `system_prompt` | `str`          | System prompt at write time                     |
-| `temperature`   | `float`        | Temperature at write time (`-1.0` = unset)    |
-| `tags`          | `list[str]`    | Tags for selective invalidation                 |
+| Field             | Type             | Description                                          |
+| ----------------- | ---------------- | ---------------------------------------------------- |
+| `id`            | `int \| None`   | Backend-assigned unique identifier                   |
+| `namespace`     | `str`          | Canonical scoped execution partition                 |
+| `query`         | `str`          | Original query text                                  |
+| `vector`        | `np.ndarray`   | Configured-dimension L2-normalized float32 embedding |
+| `response`      | `Any`          | Cached LLM response (must be JSON-serializable)      |
+| `created_at`    | `float`        | Unix timestamp of entry creation                     |
+| `expires_at`    | `float \| None` | Unix timestamp of expiry (`None` = no expiry)      |
+| `hit_count`     | `int`          | Number of times this entry has been served           |
+| `model`         | `str`          | Model identifier at write time                       |
+| `system_prompt` | `str`          | System prompt at write time                          |
+| `temperature`   | `float`        | Temperature at write time (`-1.0` = unset)         |
+| `tags`          | `list[str]`    | Tags for selective invalidation                      |
 
 ---
 
@@ -792,9 +770,9 @@ LongCache uses **BAAI/bge-small-en-v1.5** by default:
 
 ### FAISS Index
 
-| Index             | Config Value | Characteristics                                                 |
-| ----------------- | ------------ | --------------------------------------------------------------- |
-| `IndexFlatIP`   | `"flat"`   | Exact search; measure latency and memory at your cache size           |
+| Index             | Config Value | Characteristics                                                          |
+| ----------------- | ------------ | ------------------------------------------------------------------------ |
+| `IndexFlatIP`   | `"flat"`   | Exact search; measure latency and memory at your cache size              |
 | `IndexHNSWFlat` | `"hnsw"`   | Approximate search; measure recall, latency, and memory on your workload |
 
 After TTL sweeps, namespace invalidations, or evictions, the local FAISS index is rebuilt from live backend entries. Redis storage alone does not synchronize indexes between processes.
@@ -887,14 +865,14 @@ longcache/
 
 ### Optional Extras
 
-| Extra            | Package(s)                                                       | Purpose                      |
-| ---------------- | ---------------------------------------------------------------- | ---------------------------- |
-| `[redis]`      | `redis>=5.0.0,<6.0.0`                                          | Redis & async Redis backends |
-| `[langchain]`  | `langchain-core>=1.0.0,<2.0.0`, `langgraph>=1.0.0,<2.0.0`       | LangChain + LangGraph        |
-| `[llamaindex]` | `llama-index-core>=0.10.0,<1.0.0`                              | LlamaIndex integration       |
-| `[openai]`     | `openai>=1.0.0,<2.0.0`                                         | Direct OpenAI integration    |
-| `[server]`     | `fastapi>=0.109.0,<1.0.0`, `starlette>=0.36.0,<1.0.0`, `uvicorn>=0.27.0,<1.0.0` | ASGI middleware |
-| `[all]`        | All of the above                                                 | Everything                   |
+| Extra            | Package(s)                                                                            | Purpose                      |
+| ---------------- | ------------------------------------------------------------------------------------- | ---------------------------- |
+| `[redis]`      | `redis>=5.0.0,<6.0.0`                                                               | Redis & async Redis backends |
+| `[langchain]`  | `langchain-core>=1.0.0,<2.0.0`, `langgraph>=1.0.0,<2.0.0`                         | LangChain + LangGraph        |
+| `[llamaindex]` | `llama-index-core>=0.10.0,<1.0.0`                                                   | LlamaIndex integration       |
+| `[openai]`     | `openai>=1.0.0,<2.0.0`                                                              | Direct OpenAI integration    |
+| `[server]`     | `fastapi>=0.109.0,<1.0.0`, `starlette>=0.36.0,<1.0.0`, `uvicorn>=0.27.0,<1.0.0` | ASGI middleware              |
+| `[all]`        | All of the above                                                                      | Everything                   |
 
 ### Development
 
@@ -937,12 +915,6 @@ test Redis instance and available BGE-small model weights:
 LONGCACHE_TEST_REDIS_URL=redis://localhost:16379/0 LONGCACHE_TEST_MODEL=1 \
     uv run --no-sync pytest -q -rs
 ```
-
-Skipped backend/model cases do not establish full matrix coverage. The recorded
-v0.3 installed-wheel runs passed **457 tests per interpreter with zero skips**;
-see the [execution record](docs/plans/v0.3.0-execution.md). Full performance
-qualification and the other [release gates](docs/plans/v0.3.0-acceptance.md#release-readiness-checklist)
-remain separate from these tests.
 
 ---
 
